@@ -1,4 +1,4 @@
-export type Role = "student" | "admin" | "authority";
+export type Role = "student" | "admin" | "authority" | "faculty";
 
 export type VerificationStatus =
   | "awaiting_verification"

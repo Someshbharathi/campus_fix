@@ -19,7 +19,7 @@ import {
   Bell,
   X,
 } from "lucide-react";
-import { useCampusFix } from "@/lib/store";
+import { getRoleHomePath, isAuthorityRole, useCampusFix } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface SidebarProps {
@@ -140,7 +140,7 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
   const navItems =
     role === "admin"
       ? adminNavItems
-      : role === "authority"
+      : isAuthorityRole(role)
       ? authorityNavItems
       : studentNavItems;
 
@@ -149,17 +149,15 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
     router.push("/login");
   };
 
-  const handleSelectRole = (newRole: "student" | "admin" | "authority") => {
+  const handleSelectRole = (newRole: "student" | "admin" | "authority" | "faculty") => {
     switchRole(newRole);
-    if (newRole === "admin") router.push("/admin");
-    else if (newRole === "authority") router.push("/authority");
-    else router.push("/student");
+    router.push(getRoleHomePath(newRole));
     if (onCloseMobile) onCloseMobile();
   };
 
   const handleToggleRole = () => {
     const nextRole =
-      role === "student" ? "admin" : role === "admin" ? "authority" : "student";
+      role === "student" ? "admin" : role === "admin" ? "faculty" : "student";
     handleSelectRole(nextRole);
   };
 
@@ -168,7 +166,7 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
       {/* Brand Header */}
       <div className="p-5 flex items-center justify-between border-b border-slate-800/80">
         <Link
-          href={role === "admin" ? "/admin" : role === "authority" ? "/authority" : "/student"}
+          href={getRoleHomePath(role)}
           className="flex items-center gap-3 group"
           onClick={onCloseMobile}
         >
@@ -208,14 +206,14 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
                   "w-2 h-2 rounded-full",
                   role === "admin"
                     ? "bg-amber-400"
-                    : role === "authority"
+                    : isAuthorityRole(role)
                     ? "bg-sky-400"
                     : "bg-emerald-400"
                 )}
               />
               {role === "admin"
                 ? "Administrator"
-                : role === "authority"
+                : isAuthorityRole(role)
                 ? "Authority"
                 : "Student"}
             </span>
@@ -258,15 +256,15 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
           </button>
           <button
             type="button"
-            onClick={() => handleSelectRole("authority")}
+            onClick={() => handleSelectRole("faculty")}
             className={cn(
               "py-1 px-1 rounded text-[10px] font-semibold text-center transition-colors",
-              role === "authority"
+              isAuthorityRole(role)
                 ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
                 : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/80"
             )}
           >
-            Authority
+            Faculty
           </button>
         </div>
       </div>

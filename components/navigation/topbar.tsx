@@ -14,7 +14,7 @@ import {
   LogOut,
   ChevronDown,
 } from "lucide-react";
-import { useCampusFix } from "@/lib/store";
+import { getRoleHomePath, isAuthorityRole, useCampusFix } from "@/lib/store";
 
 interface TopbarProps {
   onOpenMobileSidebar: () => void;
@@ -126,7 +126,7 @@ export function Topbar({
               <span className="block text-[10px] text-slate-400 leading-tight capitalize">
                 {currentUser?.role === "admin"
                   ? "Staff Admin"
-                  : currentUser?.role === "authority"
+                  : isAuthorityRole(currentUser?.role)
                   ? "Field Authority"
                   : "Student"}
               </span>
@@ -151,12 +151,12 @@ export function Topbar({
                   <div className="mt-1 flex items-center gap-1 text-[10px] font-medium text-slate-600 dark:text-slate-300">
                     {currentUser?.role === "admin" ? (
                       <Shield className="h-3 w-3 text-amber-500" />
-                    ) : currentUser?.role === "authority" ? (
+                    ) : isAuthorityRole(currentUser?.role) ? (
                       <Wrench className="h-3 w-3 text-sky-500" />
                     ) : (
                       <GraduationCap className="h-3 w-3 text-emerald-500" />
                     )}
-                    <span className="capitalize">{currentUser?.role} Account</span>
+                    <span className="capitalize">{currentUser?.role === "faculty" ? "faculty" : currentUser?.role} Account</span>
                   </div>
                 </div>
 

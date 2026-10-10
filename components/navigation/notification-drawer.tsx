@@ -3,7 +3,7 @@
 import React from "react";
 import { X, CheckCheck, Bell, ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { useCampusFix } from "@/lib/store";
+import { isAuthorityRole, useCampusFix } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 interface NotificationDrawerProps {
@@ -17,7 +17,7 @@ export function NotificationDrawer({ isOpen, onClose }: NotificationDrawerProps)
 
   if (!isOpen) return null;
 
-  const rolePrefix = currentUser?.role === "admin" ? "/admin" : "/student";
+  const rolePrefix = currentUser?.role === "admin" ? "/admin" : isAuthorityRole(currentUser?.role) ? "/authority" : "/student";
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -103,6 +103,8 @@ export function NotificationDrawer({ isOpen, onClose }: NotificationDrawerProps)
                         href={
                           currentUser?.role === "admin"
                             ? `/admin/complaints/${item.complaintId}`
+                            : isAuthorityRole(currentUser?.role)
+                            ? `/authority/complaints/${item.complaintId}`
                             : `/student/complaints/${item.complaintId}`
                         }
                         onClick={onClose}

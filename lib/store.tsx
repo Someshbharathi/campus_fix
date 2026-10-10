@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { INITIAL_COMPLAINTS, INITIAL_NOTIFICATIONS, SAMPLE_USERS } from "./sample-data";
+import { createClient } from "@/lib/supabase/client";
 import {
   Complaint,
   ComplaintCategory,
@@ -11,6 +11,7 @@ import {
   Role,
   TimelineEvent,
   User,
+  VerificationStatus,
 } from "./types";
 
 interface CampusFixContextType {
@@ -18,7 +19,7 @@ interface CampusFixContextType {
   complaints: Complaint[];
   notifications: NotificationItem[];
   isLoading: boolean;
-  login: (email: string, password: string, role: Role) => Promise<{ success: boolean; error?: string }>;
+  login: (email: string, password: string, role: Role) => Promise<{ success: boolean; error?: string; user?: User }>;
   logout: () => void;
   switchRole: (role: Role) => void;
   submitComplaint: (data: {
@@ -66,36 +67,257 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: "campusfix_notifications",
 };
 
+export const isAuthorityRole = (role?: string | null): boolean => {
+  return role === "authority" || role === "faculty";
+};
+
+export const getRoleHomePath = (role?: string | null): string => {
+  if (role === "admin") return "/admin";
+  if (isAuthorityRole(role)) return "/authority";
+  return "/student";
+};
+
+const normalizeRole = (role?: string | null): Role => {
+  if (!role) return "student";
+  if (role === "faculty") return "authority";
+  if (role === "authority") return "authority";
+  if (role === "admin") return "admin";
+  return "student";
+};
+
+const getSupabaseConfigError = () => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (!url || !key) {
+    return "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY to .env.local.";
+  }
+
+  return null;
+};
+
+type DatabaseIssue = {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  location: string;
+  priority: Priority;
+  status: string;
+  reporter_id?: string;
+  assigned_department?: string | null;
+  image_path?: string | null;
+  verification_status: string;
+  verification_note?: string | null;
+  verified_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint => {
+  const verificationStatus: VerificationStatus =
+    issue.verification_status === "approved"
+      ? "verified"
+      : issue.verification_status === "rejected"
+      ? "rejected"
+      : issue.verification_status === "needs_clarification"
+      ? "info_requested"
+      : "awaiting_verification";
+
+  const resolutionStatus: ResolutionStatus =
+    issue.status === "reported"
+      ? "awaiting_verification"
+      : issue.status === "assigned"
+        ? "pending_assignment"
+        : issue.status === "in_progress" || issue.status === "resolved"
+        ? issue.status
+      : "submitted";
+
+  return {
+    id: issue.id,
+    title: issue.title,
+    description: issue.description,
+    category: issue.category as ComplaintCategory,
+    campusLocation: issue.location,
+    specificLocation: issue.location,
+    evidenceUrl: issue.image_path || undefined,
+    verificationStatus,
+    verificationReason: issue.verification_note || undefined,
+    verificationDate: issue.verified_at || undefined,
+    resolutionStatus,
+    priority: issue.priority,
+    assignedDepartment: issue.assigned_department || undefined,
+    submittedBy: {
+      id: issue.reporter_id || "unknown",
+      name: issue.reporter_id === user?.id ? user?.name || "Campus Student" : "Campus Student",
+      email: issue.reporter_id === user?.id ? user?.email || "" : "",
+    },
+    submittedAt: issue.created_at,
+    updatedAt: issue.updated_at,
+    timeline: [],
+  };
+};
+
+const apiError = async (response: Response) => {
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+  return payload?.error || `Request failed with status ${response.status}.`;
+};
+
+const backendCategory = (category: ComplaintCategory): string => {
+  if (category === "classroom" || category === "maintenance") return "infrastructure";
+  if (category === "network") return "internet";
+  if (category === "hostel" || category === "safety") return "other";
+  return category;
+};
+
+const backendDepartment = (department: string): string => {
+  const mappings: Record<string, string> = {
+    "Electrical Maintenance": "Electrical",
+    "Plumbing & Water Works": "Plumbing",
+    "Sanitation & Housekeeping": "Cleanliness",
+    "Academic Infrastructure": "Infrastructure",
+    "Hostel Administration & Wardens": "General Maintenance",
+    "IT & Network Infrastructure": "IT Support",
+    "Campus Security & Safety": "General Maintenance",
+    "Civil & Estate Works": "Infrastructure",
+    "General Administration": "General Maintenance",
+  };
+  return mappings[department] || department;
+};
+
+const buildProfileFromUser = async (user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }) => {
+  const supabase = createClient();
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id, full_name, role, department")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message || "Unable to load the user profile.");
+  }
+
+  if (!profile) {
+    const name =
+      (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name) ||
+      (typeof user.user_metadata?.name === "string" && user.user_metadata.name) ||
+      (typeof user.email === "string" && user.email.split("@")[0]) ||
+      "Campus User";
+
+    const { data: insertedProfile, error: insertError } = await supabase
+      .from("profiles")
+      .insert({
+        id: user.id,
+        full_name: name,
+        role: "student",
+      })
+      .select("id, full_name, role, department")
+      .single();
+
+    if (insertError) {
+      throw new Error(insertError.message || "Unable to create the user profile.");
+    }
+
+    return {
+      id: insertedProfile.id,
+      name: insertedProfile.full_name || name,
+      email: user.email || "",
+      role: normalizeRole(insertedProfile.role),
+      department: insertedProfile.department ?? undefined,
+      avatar: undefined,
+    } satisfies User;
+  }
+
+  return {
+    id: profile.id,
+    name: profile.full_name || user.email || "Campus User",
+    email: user.email || "",
+    role: normalizeRole(profile.role),
+    department: profile.department ?? undefined,
+    avatar: undefined,
+  } satisfies User;
+};
+
 export function CampusFixProvider({ children }: { children: React.ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(SAMPLE_USERS.student);
-  const [complaints, setComplaints] = useState<Complaint[]>(INITIAL_COMPLAINTS);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize from localStorage if present
   useEffect(() => {
-    try {
-      const storedUser = localStorage.getItem(STORAGE_KEYS.USER);
-      if (storedUser) {
-        setCurrentUser(JSON.parse(storedUser));
-      } else {
-        setCurrentUser(SAMPLE_USERS.student);
+    const hydrateSession = async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session?.user) {
+          setCurrentUser(null);
+          setComplaints([]);
+          setNotifications([]);
+          return;
+        }
+
+        const user = await buildProfileFromUser(session.user);
+        setCurrentUser(user);
+        const { data: refreshedSession } = await supabase.auth.getSession();
+        if (refreshedSession.session?.access_token) {
+          const endpoint = isAuthorityRole(user.role)
+            ? "/api/authority/issues"
+            : "/api/issues";
+          const response = await fetch(endpoint, {
+            headers: { Authorization: `Bearer ${refreshedSession.session.access_token}` },
+          });
+          if (!response.ok) throw new Error(await apiError(response));
+          const payload = (await response.json()) as { issues?: DatabaseIssue[] };
+          setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+        }
+      } catch {
+        setCurrentUser(null);
+        setComplaints([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    hydrateSession();
+
+    const supabase = createClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_OUT") {
+        setCurrentUser(null);
+        setComplaints([]);
+        setNotifications([]);
+        return;
       }
 
-      const storedComplaints = localStorage.getItem(STORAGE_KEYS.COMPLAINTS);
-      if (storedComplaints) {
-        setComplaints(JSON.parse(storedComplaints));
+      if (event === "SIGNED_IN" && session?.user) {
+        try {
+          const user = await buildProfileFromUser(session.user);
+          setCurrentUser(user);
+          const endpoint = isAuthorityRole(user.role)
+            ? "/api/authority/issues"
+            : "/api/issues";
+          const response = await fetch(endpoint, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (!response.ok) throw new Error(await apiError(response));
+          const payload = (await response.json()) as { issues?: DatabaseIssue[] };
+          setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+        } catch {
+          setCurrentUser(null);
+          setComplaints([]);
+        }
       }
+    });
 
-      const storedNotifs = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-      if (storedNotifs) {
-        setNotifications(JSON.parse(storedNotifs));
-      }
-    } catch {
-      // Fallback to initial state
-    } finally {
-      setIsLoading(false);
-    }
+    return () => subscription.unsubscribe();
   }, []);
 
   // Sync state helpers
@@ -134,57 +356,72 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     email: string,
     password: string,
     role: Role
-  ): Promise<{ success: boolean; error?: string }> => {
-    // Artificial slight delay for realistic UI loading feedback
-    await new Promise((r) => setTimeout(r, 600));
+  ): Promise<{ success: boolean; error?: string; user?: User }> => {
+    const configError = getSupabaseConfigError();
+    if (configError) {
+      return { success: false, error: configError };
+    }
 
     if (!email || !email.includes("@")) {
       return { success: false, error: "Please provide a valid college email address." };
     }
-    if (!password || password.length < 4) {
-      return { success: false, error: "Password must be at least 4 characters long." };
+
+    if (!password || password.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters long." };
     }
 
-    const matchedUser: User = {
-      id:
-        role === "student"
-          ? "usr_student_01"
-          : role === "admin"
-          ? "usr_admin_01"
-          : "usr_auth_01",
-      name:
-        role === "student"
-          ? "Rohan Verma"
-          : role === "admin"
-          ? "Dr. Meenakshi Sundaram"
-          : "Er. Rajesh Sharma",
-      email: email,
-      role: role,
-      rollNumber: role === "student" ? "23BCE1048" : undefined,
-      department:
-        role === "student"
-          ? "Computer Science & Engineering"
-          : role === "admin"
-          ? "Campus Estate & Student Grievance Cell"
-          : "Electrical Maintenance",
-      avatar:
-        role === "student"
-          ? "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"
-          : role === "admin"
-          ? "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80"
-          : "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-    };
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.signInWithPassword({ email, password });
 
-    saveUser(matchedUser);
-    return { success: true };
+      if (error || !user) {
+        return { success: false, error: error?.message || "Invalid email or password." };
+      }
+
+      const profile = await buildProfileFromUser(user);
+      const expectedRole = normalizeRole(role);
+      if (profile.role !== expectedRole) {
+        await supabase.auth.signOut();
+        return {
+          success: false,
+          error: `This account is not registered as a ${expectedRole}.`,
+        };
+      }
+
+      saveUser(profile);
+      return { success: true, user: profile };
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Authentication could not be completed. Please try again.",
+      };
+    }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore sign-out errors and clear local session state.
+    }
+
     saveUser(null);
+    setComplaints([]);
+    setNotifications([]);
   };
 
   const switchRole = (role: Role) => {
-    saveUser(SAMPLE_USERS[role]);
+    const normalizedRole = normalizeRole(role);
+    setCurrentUser((previous) =>
+      previous ? { ...previous, role: normalizedRole } : previous
+    );
   };
 
   const submitComplaint = async (data: {
@@ -197,114 +434,43 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     evidenceUrl?: string;
     priority?: Priority;
   }): Promise<Complaint> => {
-    await new Promise((r) => setTimeout(r, 700));
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
 
-    const nextNumber = complaints.length + 845;
-    const complaintId = `CF-2026-${String(nextNumber).padStart(4, "0")}`;
-    const nowIso = new Date().toISOString();
-
-    const newTimelineEvent: TimelineEvent = {
-      id: `evt-${Date.now()}-1`,
-      title: "Complaint Submitted",
-      description: `Logged by ${currentUser?.name || "Student"}. Queued for administrative review and verification.`,
-      timestamp: nowIso,
-      status: "Submitted",
-      actor: `Student (${currentUser?.name || "Student"})`,
-      type: "created",
-    };
-
-    const newComplaint: Complaint = {
-      id: complaintId,
-      title: data.title,
-      category: data.category,
-      description: data.description,
-      campusLocation: data.campusLocation,
-      specificLocation: data.specificLocation,
-      evidenceName: data.evidenceName,
-      evidenceUrl: data.evidenceUrl,
-      verificationStatus: "awaiting_verification",
-      resolutionStatus: "awaiting_verification",
-      priority: data.priority || "medium",
-      submittedBy: {
-        id: currentUser?.id || "usr_student_01",
-        name: currentUser?.name || "Rohan Verma",
-        email: currentUser?.email || "rohan.verma@campus.edu",
-        rollNumber: currentUser?.rollNumber || "23BCE1048",
-      },
-      submittedAt: nowIso,
-      updatedAt: nowIso,
-      timeline: [newTimelineEvent],
-    };
-
-    const updatedComplaints = [newComplaint, ...complaints];
-    saveComplaints(updatedComplaints);
-
-    // Add notification
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: "Complaint Registered",
-      message: `Your complaint ${complaintId} has been successfully submitted and is awaiting verification.`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: complaintId,
-      type: "status",
-    };
-    saveNotifications([newNotif, ...notifications]);
-
-    return newComplaint;
+    const response = await fetch("/api/issues", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        title: data.title,
+        description: data.description,
+        category: backendCategory(data.category),
+        location: `${data.campusLocation} - ${data.specificLocation}`,
+      }),
+    });
+    if (!response.ok) throw new Error(await apiError(response));
+    const payload = (await response.json()) as { issue: DatabaseIssue };
+    const created = mapDatabaseIssue(payload.issue, currentUser);
+    setComplaints((previous) => [created, ...previous]);
+    return created;
   };
 
   const verifyComplaint = async (id: string, verified: boolean, reason?: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      const newTimeline: TimelineEvent[] = [
-        ...c.timeline,
-        {
-          id: `evt-${Date.now()}`,
-          title: verified ? "Complaint Verified" : "Complaint Rejected",
-          description: verified
-            ? reason || `Verified by ${currentUser?.name || "Administrator"}. Approved for resolution dispatch.`
-            : `Rejected during screening: ${reason || "Does not meet submission criteria."}`,
-          timestamp: nowIso,
-          status: verified ? "Verified" : "Rejected",
-          actor: `Admin (${currentUser?.name || "Administrator"})`,
-          type: verified ? "verified" : "rejected",
-        },
-      ];
-
-      return {
-        ...c,
-        verificationStatus: verified ? ("verified" as const) : ("rejected" as const),
-        verificationReason: reason,
-        verificationDate: nowIso,
-        resolutionStatus: verified
-          ? ("pending_assignment" as const)
-          : ("rejected" as const),
-        updatedAt: nowIso,
-        timeline: newTimeline,
-      };
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/admin/issues/${id}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        decision: verified ? "approved" : "rejected",
+        note: reason?.trim() || undefined,
+      }),
     });
-
-    saveComplaints(updatedComplaints);
-
-    // Add notification for the student
-    const target = complaints.find((c) => c.id === id);
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: verified ? "Complaint Verified" : "Complaint Rejected",
-      message: verified
-        ? `Complaint ${id} was verified by the administration and is awaiting department dispatch.`
-        : `Complaint ${id} was rejected: ${reason || "Declined during verification review."}`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: id,
-      type: "verification",
-    };
-    saveNotifications([newNotif, ...notifications]);
+    if (!response.ok) throw new Error(await apiError(response));
+    setComplaints((previous) => previous.map((item) => item.id === id
+      ? { ...item, verificationStatus: verified ? "verified" : "rejected", verificationReason: reason }
+      : item));
   };
 
   const forwardComplaint = async (
@@ -314,97 +480,34 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     priority?: Priority,
     directives?: string
   ): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      const newTimeline: TimelineEvent[] = [
-        ...c.timeline,
-        {
-          id: `evt-${Date.now()}`,
-          title: `Verified & Forwarded to ${department}`,
-          description: directives
-            ? `Verified by Administrator. Dispatched to ${department}${person ? ` (${person})` : ""}. Directives: "${directives}"`
-            : `Verified by Administrator and forwarded to ${department}${person ? ` (${person})` : ""} for field execution.`,
-          timestamp: nowIso,
-          status: "Assigned & In Progress",
-          actor: `Admin (${currentUser?.name || "Administrator"})`,
-          type: "assigned",
-        },
-      ];
-
-      return {
-        ...c,
-        verificationStatus: "verified" as const,
-        verificationReason: directives || `Verified and forwarded to ${department}`,
-        verificationDate: nowIso,
-        resolutionStatus: "in_progress" as const,
-        assignedDepartment: department,
-        assignedPerson: person || c.assignedPerson || `${department} Field Team`,
-        priority: priority || c.priority,
-        updatedAt: nowIso,
-        timeline: newTimeline,
-      };
+    await verifyComplaint(id, true, directives);
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/admin/issues/${id}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ department: backendDepartment(department) }),
     });
-
-    saveComplaints(updatedComplaints);
-
-    // Notification for student
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: "Complaint Forwarded to Authority",
-      message: `Complaint ${id} was verified and forwarded to ${department}${person ? ` (${person})` : ""} for execution.`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: id,
-      type: "assignment",
-    };
-    saveNotifications([newNotif, ...notifications]);
+    if (!response.ok) throw new Error(await apiError(response));
+    setComplaints((previous) => previous.map((item) => item.id === id
+      ? { ...item, verificationStatus: "verified", resolutionStatus: "submitted", assignedDepartment: department }
+      : item));
   };
 
   const requestAdditionalInfo = async (id: string, message: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      const newTimeline: TimelineEvent[] = [
-        ...c.timeline,
-        {
-          id: `evt-${Date.now()}`,
-          title: "Additional Information Requested",
-          description: message,
-          timestamp: nowIso,
-          status: "Info Requested",
-          actor: `Admin (${currentUser?.name || "Administrator"})`,
-          type: "info_requested",
-        },
-      ];
-
-      return {
-        ...c,
-        verificationStatus: "info_requested" as const,
-        additionalInfoRequested: message,
-        updatedAt: nowIso,
-        timeline: newTimeline,
-      };
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/admin/issues/${id}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ decision: "needs_clarification", note: message.trim() }),
     });
-
-    saveComplaints(updatedComplaints);
-
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: "Action Required: Info Requested",
-      message: `Admin requested additional details for complaint ${id}: "${message}"`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: id,
-      type: "info",
-    };
-    saveNotifications([newNotif, ...notifications]);
+    if (!response.ok) throw new Error(await apiError(response));
+    setComplaints((previous) => previous.map((item) => item.id === id
+      ? { ...item, verificationStatus: "info_requested", verificationReason: message }
+      : item));
   };
 
   const provideAdditionalInfo = async (id: string, message: string): Promise<void> => {
@@ -444,49 +547,18 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     department: string,
     person?: string
   ): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      const newTimeline: TimelineEvent[] = [
-        ...c.timeline,
-        {
-          id: `evt-${Date.now()}`,
-          title: `Assigned to ${department}`,
-          description: person
-            ? `Assigned to technician ${person}.`
-            : `Assigned to ${department} team for resolution.`,
-          timestamp: nowIso,
-          status: "Assigned",
-          actor: `Admin (${currentUser?.name || "Dispatch"})`,
-          type: "assigned",
-        },
-      ];
-
-      return {
-        ...c,
-        assignedDepartment: department,
-        assignedPerson: person || c.assignedPerson,
-        resolutionStatus: "in_progress" as const,
-        updatedAt: nowIso,
-        timeline: newTimeline,
-      };
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/admin/issues/${id}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ department: backendDepartment(department) }),
     });
-
-    saveComplaints(updatedComplaints);
-
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: "Department Assigned",
-      message: `Complaint ${id} was assigned to ${department}${person ? ` (${person})` : ""}.`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: id,
-      type: "assignment",
-    };
-    saveNotifications([newNotif, ...notifications]);
+    if (!response.ok) throw new Error(await apiError(response));
+    setComplaints((previous) => previous.map((item) => item.id === id
+      ? { ...item, assignedDepartment: department, resolutionStatus: "submitted" }
+      : item));
   };
 
   const updatePriority = async (id: string, priority: Priority): Promise<void> => {
@@ -502,58 +574,21 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     status: ResolutionStatus,
     notes?: string
   ): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints: Complaint[] = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      let eventType: TimelineEvent["type"] = "progress";
-      let eventTitle = `Status updated to ${status.replace("_", " ")}`;
-      if (status === "resolved") {
-        eventType = "resolved";
-        eventTitle = "Complaint Resolved";
-      } else if (status === "in_progress") {
-        eventType = "progress";
-        eventTitle = "Work In Progress";
-      }
-
-      const newEvent: TimelineEvent = {
-        id: `evt-${Date.now()}`,
-        title: eventTitle,
-        description: notes || `Complaint status updated to ${status.replace("_", " ")}.`,
-        timestamp: nowIso,
-        status: status,
-        actor: currentUser?.name || "Staff",
-        type: eventType,
-      };
-
-      const newTimeline: TimelineEvent[] = [...c.timeline, newEvent];
-
-      return {
-        ...c,
-        resolutionStatus: status,
-        resolutionNotes: notes || c.resolutionNotes,
-        resolvedAt: status === "resolved" ? nowIso : c.resolvedAt,
-        updatedAt: nowIso,
-        timeline: newTimeline,
-      };
-    });
-
-    saveComplaints(updatedComplaints);
-
-    if (status === "resolved") {
-      const newNotif: NotificationItem = {
-        id: `notif-${Date.now()}`,
-        title: "Complaint Resolved",
-        message: `Complaint ${id} has been resolved! Check resolution details and confirm.`,
-        timestamp: nowIso,
-        read: false,
-        complaintId: id,
-        type: "status",
-      };
-      saveNotifications([newNotif, ...notifications]);
+    if (status !== "in_progress" && status !== "resolved") {
+      throw new Error("Only in-progress and resolved status updates are supported by the backend.");
     }
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/authority/issues/${id}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status, comment: notes?.trim() || "Status updated by department authority." }),
+    });
+    if (!response.ok) throw new Error(await apiError(response));
+    setComplaints((previous) => previous.map((item) => item.id === id
+      ? { ...item, resolutionStatus: status, resolutionNotes: notes, updatedAt: new Date().toISOString() }
+      : item));
   };
 
   const resolveComplaintByAuthority = async (
@@ -562,46 +597,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     resolutionProofUrl?: string,
     resolutionProofName?: string
   ): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints: Complaint[] = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      const newEvent: TimelineEvent = {
-        id: `evt-${Date.now()}`,
-        title: "Task Resolved by Authority",
-        description: resolutionNotes || "Maintenance work completed and verified on-site.",
-        timestamp: nowIso,
-        status: "resolved",
-        actor: `Authority (${currentUser?.name || "Field Officer"})`,
-        type: "resolved",
-      };
-
-      return {
-        ...c,
-        resolutionStatus: "resolved" as const,
-        resolutionNotes: resolutionNotes,
-        resolutionProofUrl: resolutionProofUrl || c.resolutionProofUrl,
-        resolutionProofName: resolutionProofName || c.resolutionProofName,
-        resolvedAt: nowIso,
-        updatedAt: nowIso,
-        timeline: [...c.timeline, newEvent],
-      };
-    });
-
-    saveComplaints(updatedComplaints);
-
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: "Task Resolved by Field Authority",
-      message: `Complaint ${id} has been resolved by ${currentUser?.name || "the Authority"}. Check fix notes and confirm.`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: id,
-      type: "status",
-    };
-    saveNotifications([newNotif, ...notifications]);
+    await updateStatus(id, "resolved", resolutionNotes);
   };
 
   const confirmResolution = async (id: string): Promise<void> => {

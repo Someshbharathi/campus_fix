@@ -286,6 +286,7 @@ export async function POST(request: NextRequest) {
           reporter_id: user.id,
           status: "reported",
           priority: "medium",
+          verification_status: "pending",
         })
         .select("*")
         .single();

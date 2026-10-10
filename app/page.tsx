@@ -43,7 +43,7 @@ export default function HomePage() {
   };
 
   const handleAuthorityEntry = () => {
-    switchRole("authority");
+    switchRole("faculty");
     router.push("/authority");
   };
 

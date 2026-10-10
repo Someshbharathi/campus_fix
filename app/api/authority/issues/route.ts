@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
     const { data: issues, error: issuesError } = await supabase
       .from("issues")
       .select(
-        "id, title, description, category, location, priority, status, assigned_department, created_at, updated_at"
+        "id, title, description, category, location, priority, status, reporter_id, assigned_department, image_path, verification_status, verification_note, verified_at, created_at, updated_at"
       )
       .eq("verification_status", "approved")
       .eq("assigned_department", profile.department)

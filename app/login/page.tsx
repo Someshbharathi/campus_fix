@@ -16,7 +16,7 @@ import {
   CheckCircle,
   HelpCircle,
 } from "lucide-react";
-import { useCampusFix } from "@/lib/store";
+import { isAuthorityRole, useCampusFix } from "@/lib/store";
 import { Role } from "@/lib/types";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
@@ -26,8 +26,8 @@ export default function LoginPage() {
   const { login } = useCampusFix();
 
   const [role, setRole] = useState<Role>("student");
-  const [email, setEmail] = useState<string>("rohan.verma@campus.edu");
-  const [password, setPassword] = useState<string>("password123");
+  const [email, setEmail] = useState<string>("");
+  const [password, setPassword] = useState<string>("");
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [rememberMe, setRememberMe] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -37,16 +37,6 @@ export default function LoginPage() {
   const handleRoleChange = (newRole: Role) => {
     setRole(newRole);
     setErrorMessage("");
-    if (newRole === "student") {
-      setEmail("rohan.verma@campus.edu");
-      setPassword("password123");
-    } else if (newRole === "admin") {
-      setEmail("admin.facilities@campus.edu");
-      setPassword("adminpass2026");
-    } else {
-      setEmail("authority.works@campus.edu");
-      setPassword("authpass2026");
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -69,10 +59,10 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const res = await login(email, password, role);
-      if (res.success) {
-        if (role === "admin") {
+      if (res.success && res.user) {
+        if (res.user.role === "admin") {
           router.push("/admin");
-        } else if (role === "authority") {
+        } else if (isAuthorityRole(res.user.role)) {
           router.push("/authority");
         } else {
           router.push("/student");
@@ -146,16 +136,16 @@ export default function LoginPage() {
           </button>
           <button
             type="button"
-            onClick={() => handleRoleChange("authority")}
+            onClick={() => handleRoleChange("faculty")}
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all",
-              role === "authority"
+              isAuthorityRole(role)
                 ? "bg-white text-sky-600 shadow-xs dark:bg-slate-900 dark:text-sky-400"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             )}
           >
             <Wrench className="h-4 w-4 shrink-0" />
-            <span className="truncate">Authority</span>
+            <span className="truncate">Faculty</span>
           </button>
         </div>
 
@@ -255,7 +245,7 @@ export default function LoginPage() {
               "w-full h-11 rounded-xl text-sm font-semibold text-white shadow-md transition-all flex items-center justify-center gap-2 mt-2",
               role === "admin"
                 ? "bg-amber-600 hover:bg-amber-700 shadow-amber-600/20"
-                : role === "authority"
+                : isAuthorityRole(role)
                 ? "bg-sky-600 hover:bg-sky-700 shadow-sky-600/20"
                 : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20",
               isLoading && "opacity-80 cursor-not-allowed"
@@ -271,8 +261,8 @@ export default function LoginPage() {
                 Sign in as{" "}
                 {role === "admin"
                   ? "Administrator"
-                  : role === "authority"
-                  ? "Field Authority"
+                  : isAuthorityRole(role)
+                  ? "Faculty / Authority"
                   : "Student"}
               </span>
             )}
@@ -303,11 +293,11 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleRoleChange("authority")}
+              onClick={() => handleRoleChange("faculty")}
               className="py-1.5 px-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-1"
             >
               <CheckCircle className="h-3 w-3 text-sky-500 shrink-0" />
-              <span className="truncate">Auth: Er. Rajesh</span>
+              <span className="truncate">Faculty: Er. Rajesh</span>
             </button>
           </div>
         </div>
