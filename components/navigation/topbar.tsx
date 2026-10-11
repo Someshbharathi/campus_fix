@@ -32,11 +32,17 @@ export function Topbar({
   const router = useRouter();
   const { currentUser, unreadCount, logout } = useCampusFix();
   const [profileOpen, setProfileOpen] = React.useState(false);
+  const [logoutError, setLogoutError] = React.useState<string | null>(null);
 
   const role = currentUser?.role || "student";
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    setLogoutError(null);
+    const result = await logout();
+    if (!result.success) {
+      setLogoutError(result.error || "Unable to sign out. Please try again.");
+      return;
+    }
     router.push("/login");
   };
 
@@ -141,6 +147,11 @@ export function Topbar({
                 onClick={() => setProfileOpen(false)}
               />
               <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl z-50 dark:border-slate-800 dark:bg-slate-900 animate-in fade-in zoom-in-95 duration-100">
+                {logoutError && (
+                  <p className="mb-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+                    {logoutError}
+                  </p>
+                )}
                 <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
                   <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
                     {currentUser?.name}

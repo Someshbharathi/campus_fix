@@ -20,8 +20,7 @@ interface CampusFixContextType {
   notifications: NotificationItem[];
   isLoading: boolean;
   login: (email: string, password: string, role: Role) => Promise<{ success: boolean; error?: string; user?: User }>;
-  logout: () => void;
-  switchRole: (role: Role) => void;
+  logout: () => Promise<{ success: boolean; error?: string }>;
   submitComplaint: (data: {
     title: string;
     category: ComplaintCategory;
@@ -79,8 +78,7 @@ export const getRoleHomePath = (role?: string | null): string => {
 
 const normalizeRole = (role?: string | null): Role => {
   if (!role) return "student";
-  if (role === "faculty") return "authority";
-  if (role === "authority") return "authority";
+  if (role === "faculty" || role === "authority") return "faculty";
   if (role === "admin") return "admin";
   return "student";
 };
@@ -247,6 +245,22 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  const loadComplaints = async (user: User, accessToken: string) => {
+    const endpoint = isAuthorityRole(user.role)
+      ? "/api/authority/issues"
+      : "/api/issues";
+    const response = await fetch(endpoint, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      throw new Error(await apiError(response));
+    }
+
+    const payload = (await response.json()) as { issues?: DatabaseIssue[] };
+    setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+  };
+
   useEffect(() => {
     const hydrateSession = async () => {
       try {
@@ -264,20 +278,10 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
 
         const user = await buildProfileFromUser(session.user);
         setCurrentUser(user);
-        const { data: refreshedSession } = await supabase.auth.getSession();
-        if (refreshedSession.session?.access_token) {
-          const endpoint = isAuthorityRole(user.role)
-            ? "/api/authority/issues"
-            : "/api/issues";
-          const response = await fetch(endpoint, {
-            headers: { Authorization: `Bearer ${refreshedSession.session.access_token}` },
-          });
-          if (!response.ok) throw new Error(await apiError(response));
-          const payload = (await response.json()) as { issues?: DatabaseIssue[] };
-          setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+        if (session.access_token) {
+          await loadComplaints(user, session.access_token);
         }
       } catch {
-        setCurrentUser(null);
         setComplaints([]);
       } finally {
         setIsLoading(false);
@@ -301,17 +305,8 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
         try {
           const user = await buildProfileFromUser(session.user);
           setCurrentUser(user);
-          const endpoint = isAuthorityRole(user.role)
-            ? "/api/authority/issues"
-            : "/api/issues";
-          const response = await fetch(endpoint, {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          });
-          if (!response.ok) throw new Error(await apiError(response));
-          const payload = (await response.json()) as { issues?: DatabaseIssue[] };
-          setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+          await loadComplaints(user, session.access_token);
         } catch {
-          setCurrentUser(null);
           setComplaints([]);
         }
       }
@@ -323,11 +318,6 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
   // Sync state helpers
   const saveComplaints = (newComplaints: Complaint[]) => {
     setComplaints(newComplaints);
-    try {
-      localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(newComplaints));
-    } catch {
-      // LocalStorage quota or unavailable
-    }
   };
 
   const saveNotifications = (newNotifs: NotificationItem[]) => {
@@ -373,7 +363,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     try {
       const supabase = createClient();
       const {
-        data: { user },
+        data: { user, session },
         error,
       } = await supabase.auth.signInWithPassword({ email, password });
 
@@ -392,6 +382,11 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       }
 
       saveUser(profile);
+      if (session?.access_token) {
+        void loadComplaints(profile, session.access_token).catch(() => {
+          setComplaints([]);
+        });
+      }
       return { success: true, user: profile };
     } catch (error) {
       return {
@@ -407,21 +402,21 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     try {
       const supabase = createClient();
-      await supabase.auth.signOut();
-    } catch {
-      // Ignore sign-out errors and clear local session state.
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        return { success: false, error: error.message || "Unable to sign out." };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to sign out.",
+      };
     }
 
     saveUser(null);
     setComplaints([]);
     setNotifications([]);
-  };
-
-  const switchRole = (role: Role) => {
-    const normalizedRole = normalizeRole(role);
-    setCurrentUser((previous) =>
-      previous ? { ...previous, role: normalizedRole } : previous
-    );
+    return { success: true };
   };
 
   const submitComplaint = async (data: {
@@ -451,7 +446,9 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     if (!response.ok) throw new Error(await apiError(response));
     const payload = (await response.json()) as { issue: DatabaseIssue };
     const created = mapDatabaseIssue(payload.issue, currentUser);
-    setComplaints((previous) => [created, ...previous]);
+    if (currentUser) {
+      await loadComplaints(currentUser, token);
+    }
     return created;
   };
 
@@ -686,7 +683,6 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         login,
         logout,
-        switchRole,
         submitComplaint,
         verifyComplaint,
         forwardComplaint,

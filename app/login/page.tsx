@@ -16,7 +16,7 @@ import {
   CheckCircle,
   HelpCircle,
 } from "lucide-react";
-import { isAuthorityRole, useCampusFix } from "@/lib/store";
+import { getRoleHomePath, isAuthorityRole, useCampusFix } from "@/lib/store";
 import { Role } from "@/lib/types";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
@@ -60,13 +60,7 @@ export default function LoginPage() {
     try {
       const res = await login(email, password, role);
       if (res.success && res.user) {
-        if (res.user.role === "admin") {
-          router.push("/admin");
-        } else if (isAuthorityRole(res.user.role)) {
-          router.push("/authority");
-        } else {
-          router.push("/student");
-        }
+        router.push(getRoleHomePath(res.user.role));
       } else {
         setErrorMessage(res.error || "Authentication failed. Please verify credentials.");
       }
@@ -260,9 +254,9 @@ export default function LoginPage() {
               <span>
                 Sign in as{" "}
                 {role === "admin"
-                  ? "Administrator"
+                  ? "Admin"
                   : isAuthorityRole(role)
-                  ? "Faculty / Authority"
+                  ? "Faculty"
                   : "Student"}
               </span>
             )}

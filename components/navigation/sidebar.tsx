@@ -15,7 +15,6 @@ import {
   Building2,
   Wrench,
   User,
-  RefreshCw,
   Bell,
   X,
 } from "lucide-react";
@@ -42,7 +41,8 @@ export function Sidebar(props: SidebarProps) {
 function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { currentUser, logout, switchRole, complaints, unreadCount } = useCampusFix();
+  const { currentUser, logout, complaints, unreadCount } = useCampusFix();
+  const [logoutError, setLogoutError] = React.useState<string | null>(null);
 
   const role = currentUser?.role || "student";
   const awaitingVerificationCount = complaints.filter(
@@ -144,21 +144,14 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
       ? authorityNavItems
       : studentNavItems;
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    setLogoutError(null);
+    const result = await logout();
+    if (!result.success) {
+      setLogoutError(result.error || "Unable to sign out. Please try again.");
+      return;
+    }
     router.push("/login");
-  };
-
-  const handleSelectRole = (newRole: "student" | "admin" | "authority" | "faculty") => {
-    switchRole(newRole);
-    router.push(getRoleHomePath(newRole));
-    if (onCloseMobile) onCloseMobile();
-  };
-
-  const handleToggleRole = () => {
-    const nextRole =
-      role === "student" ? "admin" : role === "admin" ? "faculty" : "student";
-    handleSelectRole(nextRole);
   };
 
   return (
@@ -191,82 +184,6 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
             <X className="h-5 w-5" />
           </button>
         )}
-      </div>
-
-      {/* Role Indicator & 3-Mode Demo Switcher */}
-      <div className="px-3.5 py-3 mx-3 my-3 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2 text-xs">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-[10px] uppercase tracking-wider text-slate-400 block font-semibold">
-              Active Mode
-            </span>
-            <span className="font-semibold text-slate-200 capitalize flex items-center gap-1.5">
-              <span
-                className={cn(
-                  "w-2 h-2 rounded-full",
-                  role === "admin"
-                    ? "bg-amber-400"
-                    : isAuthorityRole(role)
-                    ? "bg-sky-400"
-                    : "bg-emerald-400"
-                )}
-              />
-              {role === "admin"
-                ? "Administrator"
-                : isAuthorityRole(role)
-                ? "Authority"
-                : "Student"}
-            </span>
-          </div>
-          <button
-            onClick={handleToggleRole}
-            className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-300 hover:text-indigo-200 bg-slate-700/70 hover:bg-slate-700 px-2 py-1 rounded-md transition-colors"
-            title="Cycle next mode (Student -> Admin -> Authority)"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Cycle
-          </button>
-        </div>
-
-        {/* 3-Mode Quick Tab Switcher */}
-        <div className="grid grid-cols-3 gap-1 pt-1 border-t border-slate-700/40">
-          <button
-            type="button"
-            onClick={() => handleSelectRole("student")}
-            className={cn(
-              "py-1 px-1 rounded text-[10px] font-semibold text-center transition-colors",
-              role === "student"
-                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/80"
-            )}
-          >
-            Student
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSelectRole("admin")}
-            className={cn(
-              "py-1 px-1 rounded text-[10px] font-semibold text-center transition-colors",
-              role === "admin"
-                ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/80"
-            )}
-          >
-            Admin
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSelectRole("faculty")}
-            className={cn(
-              "py-1 px-1 rounded text-[10px] font-semibold text-center transition-colors",
-              isAuthorityRole(role)
-                ? "bg-sky-500/20 text-sky-300 border border-sky-500/30"
-                : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/80"
-            )}
-          >
-            Faculty
-          </button>
-        </div>
       </div>
 
       {/* Main Navigation */}
@@ -335,6 +252,11 @@ function SidebarContent({ onCloseMobile, onOpenNotifications }: SidebarProps) {
 
       {/* User Footer & Logout */}
       <div className="p-3 border-t border-slate-800 bg-slate-950/40">
+        {logoutError && (
+          <p className="mb-2 rounded-lg border border-rose-900/60 bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-300">
+            {logoutError}
+          </p>
+        )}
         <div className="p-2.5 rounded-xl bg-slate-800/50 flex items-center justify-between">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-full bg-indigo-600/30 border border-indigo-500/40 text-indigo-300 flex items-center justify-center font-bold text-xs shrink-0">

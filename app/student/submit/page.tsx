@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -49,6 +49,7 @@ export default function SubmitComplaintPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [createdComplaintId, setCreatedComplaintId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const maxDescriptionChars = 1000;
 
@@ -87,6 +88,18 @@ export default function SubmitComplaintPage() {
       URL.revokeObjectURL(fileAttachment.previewUrl);
     }
     setFileAttachment(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const resetForm = () => {
+    removeAttachment();
+    setTitle("");
+    setCategory("electrical");
+    setCampusLocation(CAMPUS_LOCATIONS[0]);
+    setSpecificLocation("");
+    setDescription("");
+    setPriority("medium");
+    setErrors({});
   };
 
   const validate = (): boolean => {
@@ -140,10 +153,11 @@ export default function SubmitComplaintPage() {
         specificLocation: specificLocation.trim(),
         description: description.trim(),
         evidenceName: fileAttachment?.name,
-        evidenceUrl: fileAttachment?.previewUrl || "https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800&auto=format&fit=crop&q=80",
+        evidenceUrl: fileAttachment?.previewUrl,
         priority,
       });
 
+      resetForm();
       setCreatedComplaintId(created.id);
     } catch {
       setErrors((prev) => ({
@@ -378,6 +392,7 @@ export default function SubmitComplaintPage() {
                 <label className="inline-block cursor-pointer px-4 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 transition-colors">
                   Choose Photo / File
                   <input
+                    ref={fileInputRef}
                     type="file"
                     accept="image/*,application/pdf"
                     onChange={handleFileChange}
@@ -506,6 +521,13 @@ export default function SubmitComplaintPage() {
             >
               Back to Dashboard
             </Link>
+            <button
+              type="button"
+              onClick={() => setCreatedComplaintId(null)}
+              className="w-full sm:flex-1 py-2.5 px-4 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold transition-colors dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+            >
+              Submit Another Complaint
+            </button>
           </div>
         </div>
       </Modal>

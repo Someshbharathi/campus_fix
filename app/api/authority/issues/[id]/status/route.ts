@@ -3,17 +3,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
+const supabaseKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
+  let stage = "request validation";
+
   try {
     // 1. Read and validate the authorization token
     const authHeader = request.headers.get("authorization");
 
     if (!authHeader?.startsWith("Bearer ")) {
+      console.warn("Authority status request missing bearer token.");
       return NextResponse.json(
         { error: "Authentication required." },
         { status: 401 }
@@ -23,14 +28,16 @@ export async function PATCH(
     const token = authHeader.slice(7).trim();
 
     if (!token) {
+      console.warn("Authority status request received an empty bearer token.");
       return NextResponse.json(
         { error: "Authentication token is missing." },
         { status: 401 }
       );
     }
 
-    // 2. Create a Supabase client using the user's token
-    const supabase = createClient(supabaseUrl, supabaseKey, {
+    // 2. Use a normal client to validate the bearer token. Supabase clients
+    // configured with accessToken cannot call supabase.auth.getUser().
+    const authClient = createClient(supabaseUrl, supabaseKey, {
       global: {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -43,15 +50,66 @@ export async function PATCH(
     });
 
     // 3. Verify the authenticated user
+    stage = "token validation";
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser(token);
+    } = await authClient.auth.getUser(token);
 
     if (authError || !user) {
+      console.warn("Authority status token validation failed.", {
+        code: authError?.code,
+        message: authError?.message,
+      });
       return NextResponse.json(
         { error: "Invalid or expired authentication token." },
         { status: 401 }
+      );
+    }
+
+    // Use a separate client for database queries/RPC so auth.uid() receives
+    // this request's JWT while token validation remains available above.
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      accessToken: async () => token,
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+    stage = "profile lookup";
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role, department")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Authority status profile lookup failed.", {
+        userId: user.id,
+        code: profileError.code,
+        message: profileError.message,
+      });
+      return NextResponse.json(
+        { error: "Unable to verify department authority permissions." },
+        { status: 500 }
+      );
+    }
+
+    if (!profile || profile.role !== "faculty" || !profile.department) {
+      console.warn("Authority status profile mismatch.", {
+        userId: user.id,
+        role: profile?.role ?? null,
+        hasDepartment: Boolean(profile?.department),
+      });
+      return NextResponse.json(
+        { error: "Department authority access required." },
+        { status: 403 }
       );
     }
 
@@ -102,6 +160,7 @@ export async function PATCH(
     }
 
     // 5. Atomically update the complaint and insert its history
+    stage = "atomic status RPC";
     const { data, error } = await supabase.rpc(
       "update_issue_status_atomic",
       {
@@ -112,7 +171,15 @@ export async function PATCH(
     );
 
     if (error) {
-      console.error("Atomic status update failed:", error.message);
+      console.error("Atomic status update failed.", {
+        userId: user.id,
+        issueId: id,
+        requestedStatus: status,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
 
       // Known business-rule rejections should not be server errors.
       const expectedErrors = [
@@ -149,10 +216,19 @@ export async function PATCH(
     // 6. Return the result from the atomic database function
     return NextResponse.json(data, { status: 200 });
   } catch (error) {
-    console.error("Authority status API error:", error);
+    const diagnostic = error instanceof Error ? error.message : "Unknown server error";
+    console.error("Authority status API error.", {
+      stage,
+      message: diagnostic,
+    });
 
     return NextResponse.json(
-      { error: "An unexpected server error occurred." },
+      {
+        error:
+          process.env.NODE_ENV === "development"
+            ? `Authority status failed during ${stage}: ${diagnostic}`
+            : "An unexpected server error occurred.",
+      },
       { status: 500 }
     );
   }
