@@ -53,6 +53,7 @@ export default function SubmitComplaintPage() {
   const [fileAttachment, setFileAttachment] = useState<EvidenceAttachment | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [createdComplaintId, setCreatedComplaintId] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<{ available: boolean; priority: string; score: number; category?: string; summary?: string; reason?: string } | null>(null);
@@ -146,10 +147,12 @@ export default function SubmitComplaintPage() {
       return;
     }
     const maxBytes = kind === "image" ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES;
-    if (file.size > maxBytes) {
+    if (file.size <= 0 || file.size > maxBytes) {
       setErrors((previous) => ({
         ...previous,
-        file: `This ${kind} is too large. Maximum size is ${kind === "image" ? "10 MB" : "50 MB"}.`,
+        file: file.size <= 0
+          ? "The selected file is empty. Choose a different photo or video."
+          : `This ${kind} is too large. Maximum size is ${kind === "image" ? "10 MB" : "50 MB"}.`,
       }));
       return;
     }
@@ -260,6 +263,7 @@ export default function SubmitComplaintPage() {
     if (isSubmitting || !validate()) return;
 
     setIsSubmitting(true);
+    setUploadProgress(fileAttachment ? 0 : null);
     setErrors((previous) => ({ ...previous, submit: "" }));
     try {
       const created = await submitComplaint({
@@ -268,6 +272,7 @@ export default function SubmitComplaintPage() {
         specificLocation: specificLocation.trim(),
         description: description.trim(),
         attachment: fileAttachment?.file,
+        onUploadProgress: setUploadProgress,
       });
       resetForm();
       setCreatedComplaintId(created.id);
@@ -286,6 +291,7 @@ export default function SubmitComplaintPage() {
       }));
     } finally {
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
   };
 
@@ -381,6 +387,7 @@ export default function SubmitComplaintPage() {
             </div>}
           </div>}
           {fileAttachment && <EvidencePreview attachment={fileAttachment} onRemove={removeAttachment} />}
+          {isSubmitting && uploadProgress !== null && <div className="mx-auto mt-3 w-full max-w-xl" role="status" aria-live="polite"><div className="mb-1 flex justify-between text-xs text-slate-500"><span>Secure media upload</span><span>{uploadProgress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-indigo-600 transition-[width]" style={{ width: `${uploadProgress}%` }} /></div></div>}
           <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Info className="h-3.5 w-3.5 shrink-0" />One attachment per complaint. Photos up to 10 MB; videos up to 50 MB.</p>
           {errors.file && <p role="alert" className="mt-2 text-xs font-medium text-rose-600">{errors.file}</p>}
         </section>

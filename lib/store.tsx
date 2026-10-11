@@ -5,6 +5,11 @@ import { createClient } from "@/lib/supabase/client";
 import type { AIComplaintCategory } from "@/lib/ai/categories";
 import { normalizeProfileRole } from "@/lib/auth/roles";
 import {
+  mediaUploadErrorMessage,
+  uploadComplaintMedia,
+  type MediaUploadDiagnostic,
+} from "@/lib/supabase/media-upload";
+import {
   Complaint,
   ComplaintCategory,
   NotificationItem,
@@ -38,6 +43,7 @@ interface CampusFixContextType {
     evidenceUrl?: string;
     attachment?: File;
     priority?: Priority;
+    onUploadProgress?: (percentage: number) => void;
   }) => Promise<Complaint>;
   verifyComplaint: (id: string, verified: boolean, reason?: string) => Promise<void>;
   forwardComplaint: (
@@ -640,23 +646,57 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     evidenceUrl?: string;
     attachment?: File;
     priority?: Priority;
+    onUploadProgress?: (percentage: number) => void;
   }): Promise<Complaint> => {
     const { data: session } = await createClient().auth.getSession();
     const token = session.session?.access_token;
     if (!token) throw new Error("Your session has expired. Please sign in again.");
 
-    const formData = new FormData();
-    formData.set("title", data.title);
-    formData.set("description", data.description);
-    formData.set("location", `${data.campusLocation} - ${data.specificLocation}`);
-    if (data.attachment) formData.set("attachment", data.attachment, data.attachment.name);
+    let attachmentPath: string | undefined;
+    if (data.attachment) {
+      try {
+        attachmentPath = await uploadComplaintMedia(
+          data.attachment,
+          session.session!.user.id,
+          token,
+          data.onUploadProgress
+        );
+      } catch (error) {
+        const diagnostic: MediaUploadDiagnostic = error instanceof Error
+          ? { name: error.name, status: null, statusCode: null, message: error.message }
+          : error as MediaUploadDiagnostic;
+        await fetch("/api/issues/attachment-diagnostics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            name: diagnostic.name || "UploadError",
+            status: diagnostic.status ?? null,
+            statusCode: diagnostic.statusCode ?? null,
+            message: diagnostic.message || "Resumable upload failed without a response.",
+            fileSize: data.attachment.size,
+          }),
+        }).catch(() => undefined);
+        throw new Error(mediaUploadErrorMessage(diagnostic));
+      }
+    }
 
     const response = await fetch("/api/issues", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: formData,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        title: data.title,
+        description: data.description,
+        location: `${data.campusLocation} - ${data.specificLocation}`,
+        ...(attachmentPath ? { attachment_path: attachmentPath } : {}),
+      }),
     });
-    if (!response.ok) throw new Error(await apiError(response));
+    if (!response.ok) {
+      const message = await apiError(response);
+      if (attachmentPath) {
+        await createClient().storage.from("campusfix-complaint-media").remove([attachmentPath]).catch(() => undefined);
+      }
+      throw new Error(message);
+    }
     const payload = (await response.json()) as {
       issue: DatabaseIssue;
       analysis?: {

@@ -249,6 +249,8 @@ export async function POST(request: NextRequest) {
     let body: Record<string, unknown>;
     let attachmentFile: File | null = null;
     let attachmentMediaType: string | null = null;
+    let directAttachmentPath: string | null = null;
+    let hasDirectAttachmentPath = false;
 
     try {
       if (request.headers.get("content-type")?.includes("multipart/form-data")) {
@@ -267,6 +269,13 @@ export async function POST(request: NextRequest) {
           return jsonError("Request body must be a JSON object.", 400);
         }
         body = parsed as Record<string, unknown>;
+        if (body.attachment_path !== undefined) {
+          hasDirectAttachmentPath = true;
+          if (typeof body.attachment_path !== "string") {
+            return jsonError("Attachment path must be text.", 400, undefined, "INVALID_ATTACHMENT_PATH", "attachment_validation");
+          }
+          directAttachmentPath = body.attachment_path;
+        }
       }
     } catch {
       return jsonError("Request body must contain valid form data or JSON.", 400);
@@ -281,6 +290,22 @@ export async function POST(request: NextRequest) {
       }
       if (attachmentFile.size <= 0 || attachmentFile.size > maxBytes) {
         return jsonError(`Attachment is empty or exceeds the ${isImage ? "10 MB" : "50 MB"} limit.`, 400);
+      }
+    }
+
+    if (hasDirectAttachmentPath) {
+      const ownedPathPattern = new RegExp(
+        `^${user.id}/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\\.(?:${Object.values(mediaExtensions).join("|")})$`,
+        "i"
+      );
+      if (!directAttachmentPath || !ownedPathPattern.test(directAttachmentPath)) {
+        return jsonError(
+          "The uploaded attachment path is invalid or does not belong to this account.",
+          400,
+          undefined,
+          "INVALID_ATTACHMENT_PATH",
+          "attachment_validation"
+        );
       }
     }
 
@@ -420,9 +445,9 @@ export async function POST(request: NextRequest) {
       priorityFactors.frequency,
     );
 
-    // Upload through the same authenticated user client before inserting the
-    // complaint, so image_path is included in the student's own INSERT.
-    let uploadedAttachmentPath: string | null = null;
+    // New clients upload directly to private Storage with TUS. Retain the
+    // authenticated multipart path for compatibility with older clients.
+    let uploadedAttachmentPath: string | null = directAttachmentPath;
     if (attachmentFile) {
       stage = "attachment_upload";
       uploadedAttachmentPath = `${user.id}/${randomUUID()}.${mediaExtensions[attachmentMediaType!]}`;
@@ -436,11 +461,27 @@ export async function POST(request: NextRequest) {
       if (uploadError) {
         console.error("[issues:create] attachment upload failed", {
           userId: user.id,
-          code: uploadError.name,
+          name: uploadError.name,
+          status: (uploadError as { status?: number }).status ?? null,
+          statusCode: (uploadError as { statusCode?: string }).statusCode ?? null,
           message: uploadError.message,
+          bucket: complaintMediaBucket,
+          fileSize: attachmentFile.size,
         });
         uploadedAttachmentPath = null;
-        return jsonError("Could not upload the attachment. Check the file and try again.", 400, undefined, undefined, stage);
+        const statusCode = (uploadError as { statusCode?: string }).statusCode;
+        const errorStatus = (uploadError as { status?: number }).status;
+        const message = uploadError.message.toLowerCase();
+        if (errorStatus === 413 || statusCode === "413" || /file size|payload too large|exceeds.*limit/.test(message)) {
+          return jsonError("This file exceeds the active Supabase Storage size limit. Choose a smaller file or ask an administrator to check the project and bucket limits.", 413, undefined, statusCode, stage);
+        }
+        if ((errorStatus === 404 || statusCode === "404" || /bucket.*not found|bucket not found/.test(message)) && /bucket|not found/.test(message)) {
+          return jsonError("The complaint media bucket is missing. Ask an administrator to apply the complaint media Storage migration.", 500, undefined, statusCode, stage);
+        }
+        if ([401, 403].includes(errorStatus ?? Number(statusCode)) || /row-level security|permission denied|unauthorized|policy/.test(message)) {
+          return jsonError("Supabase Storage denied this upload. Sign in again; if it continues, ask an administrator to verify the private media upload policy.", 403, undefined, statusCode, stage);
+        }
+        return jsonError("Supabase Storage could not complete the upload. Check your connection and try again.", 502, undefined, statusCode, stage);
       }
     }
     stage = "database_insert";
