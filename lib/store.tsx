@@ -72,7 +72,7 @@ const STORAGE_KEYS = {
 };
 
 export const isAuthorityRole = (role?: string | null): boolean => {
-  return role === "department_authority" || role === "faculty" || role === "authority";
+  return role === "department_authority";
 };
 
 export const getRoleHomePath = (role?: string | null): string => {
@@ -83,7 +83,7 @@ export const getRoleHomePath = (role?: string | null): string => {
 
 const normalizeRole = (role?: string | null): Role => {
   if (!role) return "student";
-  if (role === "department_authority" || role === "faculty" || role === "authority") {
+  if (role === "department_authority") {
     return "department_authority";
   }
   if (role === "admin") return "admin";
@@ -110,15 +110,31 @@ type DatabaseIssue = {
   category: string;
   location: string;
   priority: Priority;
+  priority_level?: Priority | null;
+  priority_score?: number | null;
+  ai_category?: string | null;
+  ai_summary?: string | null;
+  ai_reason?: string | null;
+  routing_exception?: boolean;
+  status_history?: Array<{
+    id: string | number;
+    actor_id: string;
+    old_status: string;
+    new_status: string;
+    comment: string;
+    created_at: string;
+  }>;
   status: string;
   reporter_id?: string;
   assigned_department?: string | null;
+  assigned_at?: string | null;
   image_path?: string | null;
   verification_status: string;
   verification_note?: string | null;
   verified_at?: string | null;
   created_at: string;
   updated_at: string;
+  resolved_at?: string | null;
 };
 
 const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint => {
@@ -129,6 +145,8 @@ const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint =
       ? "rejected"
       : issue.verification_status === "needs_clarification"
       ? "info_requested"
+      : issue.verification_status === "sensitive_review"
+      ? "sensitive_review"
       : "awaiting_verification";
 
   const resolutionStatus: ResolutionStatus =
@@ -152,7 +170,12 @@ const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint =
     verificationReason: issue.verification_note || undefined,
     verificationDate: issue.verified_at || undefined,
     resolutionStatus,
-    priority: issue.priority,
+    priority: issue.priority_level || issue.priority,
+    priorityScore: issue.priority_score ?? undefined,
+    aiCategory: issue.ai_category as ComplaintCategory | undefined,
+    aiSummary: issue.ai_summary || undefined,
+    aiReason: issue.ai_reason || undefined,
+    routingException: issue.routing_exception ?? false,
     assignedDepartment: issue.assigned_department || undefined,
     submittedBy: {
       id: issue.reporter_id || "unknown",
@@ -160,14 +183,47 @@ const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint =
       email: issue.reporter_id === user?.id ? user?.email || "" : "",
     },
     submittedAt: issue.created_at,
+    assignedAt: issue.assigned_at || (issue.status === "assigned" ? issue.created_at : undefined),
     updatedAt: issue.updated_at,
-    timeline: [],
+    resolvedAt: issue.resolved_at || undefined,
+    timeline: [
+      {
+        id: `${issue.id}-created`,
+        title: "Complaint reported",
+        description: issue.assigned_department ? `Routed to ${issue.assigned_department}.` : "Sent to the administrator exception queue.",
+        timestamp: issue.created_at,
+        status: issue.status,
+        actor: issue.reporter_id === user?.id ? "You" : "Student",
+        type: "created" as const,
+      },
+      ...(issue.status_history || []).map((event) => ({
+        id: String(event.id),
+        title: event.new_status === "in_progress" ? "Work in progress" : "Complaint resolved",
+        description: event.comment,
+        timestamp: event.created_at,
+        status: event.new_status,
+        actor: event.actor_id === user?.id ? `${user?.role || "User"}` : "Campus team",
+        type: event.new_status === "resolved" ? "resolved" as const : "progress" as const,
+      })),
+    ],
   };
 };
 
 const apiError = async (response: Response) => {
-  const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-  return payload?.error || `Request failed with status ${response.status}.`;
+  const payload = (await response.json().catch(() => null)) as {
+    error?: string;
+    details?: string;
+    code?: string;
+    stage?: string;
+  } | null;
+  const reason = payload?.error || `Request failed with status ${response.status}.`;
+  const metadata = [payload?.code, payload?.stage && `stage: ${payload.stage}`]
+    .filter(Boolean)
+    .join(" | ");
+  const details = payload?.details && !reason.includes(payload.details)
+    ? payload.details
+    : "";
+  return [reason, details, metadata].filter(Boolean).join("\n");
 };
 
 const backendDepartment = (department: string): string => {
@@ -435,8 +491,19 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       }),
     });
     if (!response.ok) throw new Error(await apiError(response));
-    const payload = (await response.json()) as { issue: DatabaseIssue };
+    const payload = (await response.json()) as {
+      issue: DatabaseIssue;
+      analysis?: { available: boolean; category: ComplaintCategory | null; summary: string | null; priority: Priority; priorityScore: number; reason: string | null };
+    };
     const created = mapDatabaseIssue(payload.issue, currentUser);
+    if (payload.analysis) {
+      created.priority = payload.analysis.priority;
+      created.priorityScore = payload.analysis.priorityScore;
+      created.aiCategory = payload.analysis.category ?? undefined;
+      created.aiSummary = payload.analysis.summary ?? undefined;
+      created.aiReason = payload.analysis.reason ?? undefined;
+      created.aiAvailable = payload.analysis.available;
+    }
     if (currentUser) {
       await loadComplaints(currentUser, token);
     }
@@ -550,11 +617,20 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updatePriority = async (id: string, priority: Priority): Promise<void> => {
-    const nowIso = new Date().toISOString();
-    const updated = complaints.map((c) =>
-      c.id === id ? { ...c, priority, updatedAt: nowIso } : c
-    );
-    saveComplaints(updated);
+    if (currentUser?.role !== "admin") throw new Error("Only administrators can override priority.");
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/admin/issues/${id}/priority`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ priority }),
+    });
+    if (!response.ok) throw new Error(await apiError(response));
+    const payload = await response.json() as { issue: { updated_at: string } };
+    setComplaints((previous) => previous.map((item) => item.id === id
+      ? { ...item, priority, updatedAt: payload.issue.updated_at }
+      : item));
   };
 
   const updateStatus = async (
@@ -568,14 +644,38 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     const { data: session } = await createClient().auth.getSession();
     const token = session.session?.access_token;
     if (!token) throw new Error("Your session has expired. Please sign in again.");
-    const response = await fetch(`/api/authority/issues/${id}/status`, {
+    const endpoint = currentUser?.role === "admin"
+      ? `/api/admin/issues/${id}/status`
+      : `/api/authority/issues/${id}/status`;
+    const statusComment = notes?.trim() || (currentUser?.role === "admin"
+      ? "Status updated by an administrator."
+      : "Status updated by department authority.");
+    const response = await fetch(endpoint, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ status, comment: notes?.trim() || "Status updated by department authority." }),
+      body: JSON.stringify({ status, comment: statusComment }),
     });
     if (!response.ok) throw new Error(await apiError(response));
+    const payload = await response.json() as {
+      history?: { id: string | number; actor_id: string; new_status: string; comment: string; created_at: string };
+    };
     setComplaints((previous) => previous.map((item) => item.id === id
-      ? { ...item, resolutionStatus: status, resolutionNotes: notes, updatedAt: new Date().toISOString() }
+      ? {
+        ...item,
+        resolutionStatus: status,
+        resolutionNotes: notes,
+        updatedAt: payload.history?.created_at || new Date().toISOString(),
+        resolvedAt: status === "resolved" ? payload.history?.created_at || new Date().toISOString() : item.resolvedAt,
+        timeline: payload.history ? [...item.timeline, {
+          id: String(payload.history.id),
+          title: status === "in_progress" ? "Work in progress" : "Complaint resolved",
+          description: payload.history.comment,
+          timestamp: payload.history.created_at,
+          status: payload.history.new_status,
+          actor: currentUser?.role === "admin" ? "Administrator" : "Department authority",
+          type: status === "resolved" ? "resolved" as const : "progress" as const,
+        }] : item.timeline,
+      }
       : item));
   };
 

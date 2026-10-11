@@ -1,4 +1,4 @@
-import { ComplaintCategory } from "./types";
+import type { ComplaintCategory } from "./types";
 
 export type CanonicalDepartment =
   | "Electrical"
@@ -27,12 +27,7 @@ const CATEGORY_TO_DEPARTMENT: Partial<Record<ComplaintCategory, CanonicalDepartm
   internet: "IT Support",
   equipment: "Equipment",
   other: "General Maintenance",
-  // Legacy UI categories retain deterministic routing until the UI is migrated.
-  classroom: "Infrastructure",
-  maintenance: "Infrastructure",
-  network: "IT Support",
-  hostel: "General Maintenance",
-  safety: "General Maintenance",
+  // Legacy UI categories are normalized before this lookup.
 };
 
 export function getDepartmentForCategory(

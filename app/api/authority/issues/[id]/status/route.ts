@@ -103,7 +103,7 @@ export async function PATCH(
 
     if (
       !profile ||
-      !["faculty", "department_authority"].includes(profile.role) ||
+      profile.role !== "department_authority" ||
       !profile.department
     ) {
       console.warn("Authority status profile mismatch.", {
@@ -163,6 +163,35 @@ export async function PATCH(
       );
     }
 
+    // Defense in depth around the RPC: only a non-rejected routed issue in this
+    // authority's own department may enter the status transition function.
+    stage = "issue authorization";
+    const { data: issue, error: issueLookupError } = await supabase
+      .from("issues")
+      .select("id, status, verification_status, assigned_department")
+      .eq("id", id)
+      .eq("assigned_department", profile.department)
+      .in("verification_status", ["pending", "approved"])
+      .maybeSingle();
+
+    if (issueLookupError) {
+      console.error("Authority issue authorization lookup failed.", {
+        issueId: id,
+        code: issueLookupError.code,
+        message: issueLookupError.message,
+      });
+      return NextResponse.json(
+        { error: "Unable to verify the assigned complaint." },
+        { status: 500 }
+      );
+    }
+    if (!issue) {
+      return NextResponse.json(
+        { error: "Complaint not found, not approved, or assigned to another department." },
+        { status: 404 }
+      );
+    }
+
     // 5. Atomically update the complaint and insert its history
     stage = "atomic status RPC";
     const { data, error } = await supabase.rpc(
@@ -171,6 +200,7 @@ export async function PATCH(
         p_issue_id: id,
         p_new_status: status,
         p_comment: comment.trim(),
+        p_actor_id: user.id,
       }
     );
 
@@ -193,6 +223,7 @@ export async function PATCH(
         "A comment is required",
         "Comment is too long",
         "Department authority access required",
+        "Complaint is not eligible for department work",
         "Authentication required",
       ];
 

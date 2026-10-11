@@ -22,7 +22,7 @@ export const SAMPLE_USERS: Record<string, User> = {
     id: "usr_auth_01",
     name: "Er. Rajesh Sharma",
     email: "authority.works@campus.edu",
-    role: "authority",
+    role: "department_authority",
     department: "Electrical Maintenance",
     avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
   },

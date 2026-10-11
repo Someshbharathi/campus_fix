@@ -18,6 +18,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
+import { getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
 import { DEPARTMENTS } from "@/lib/constants";
 import { Complaint, Priority } from "@/lib/types";
 import { PriorityBadge, ResolutionBadge } from "@/components/ui/badge";
@@ -45,12 +46,13 @@ export default function AuthorityTasksPage() {
   // Filter tasks that are actively in progress or pending assignment/start
   const activeTasks = useMemo(() => {
     return complaints.filter((c) => {
-      if (c.verificationStatus !== "verified") return false;
+      if (!c.assignedDepartment || !["awaiting_verification", "verified"].includes(c.verificationStatus)) return false;
+      if (c.assignedDepartment !== userDepartment) return false;
       if (c.resolutionStatus === "resolved" || c.resolutionStatus === "rejected") {
         return false;
       }
 
-      if (departmentFilter !== "all" && c.assignedDepartment !== departmentFilter) {
+      if (departmentFilter !== "all" && c.assignedDepartment !== getCanonicalDepartment(departmentFilter)) {
         return false;
       }
 
@@ -219,7 +221,7 @@ export default function AuthorityTasksPage() {
                   <PriorityBadge priority={task.priority} size="sm" />
                   <ResolutionBadge status={task.resolutionStatus} size="sm" />
                   <span className="text-xs font-medium text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-                    {task.assignedDepartment || "General Works"}
+                    {getDepartmentDisplayName(task.assignedDepartment)}
                   </span>
                 </div>
 

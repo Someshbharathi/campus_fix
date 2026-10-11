@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -11,7 +11,6 @@ import {
   Check,
   CheckCircle2,
   FileText,
-  Image as ImageIcon,
   Info,
   Loader2,
   MapPin,
@@ -21,7 +20,7 @@ import {
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
 import { CAMPUS_LOCATIONS, CATEGORIES } from "@/lib/constants";
-import { ComplaintCategory, Priority } from "@/lib/types";
+import { ComplaintCategory } from "@/lib/types";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +37,6 @@ export default function SubmitComplaintPage() {
   const [campusLocation, setCampusLocation] = useState(CAMPUS_LOCATIONS[0]);
   const [specificLocation, setSpecificLocation] = useState("");
   const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<Priority>("medium");
   const [fileAttachment, setFileAttachment] = useState<{
     name: string;
     size: string;
@@ -49,6 +47,14 @@ export default function SubmitComplaintPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [createdComplaintId, setCreatedComplaintId] = useState<string | null>(null);
+  const [aiResult, setAiResult] = useState<{ available: boolean; priority: string; score: number; summary?: string; reason?: string } | null>(null);
+
+  useEffect(() => {
+    const previewUrl = fileAttachment?.previewUrl;
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [fileAttachment?.previewUrl]);
 
   const maxDescriptionChars = 1000;
 
@@ -76,7 +82,6 @@ export default function SubmitComplaintPage() {
       return;
     }
 
-    if (fileAttachment?.previewUrl) URL.revokeObjectURL(fileAttachment.previewUrl);
     setFileAttachment({
       name: file.name,
       size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
@@ -96,7 +101,6 @@ export default function SubmitComplaintPage() {
   };
 
   const removeAttachment = () => {
-    if (fileAttachment?.previewUrl) URL.revokeObjectURL(fileAttachment.previewUrl);
     setFileAttachment(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -108,7 +112,6 @@ export default function SubmitComplaintPage() {
     setCampusLocation(CAMPUS_LOCATIONS[0]);
     setSpecificLocation("");
     setDescription("");
-    setPriority("medium");
     setErrors({});
   };
 
@@ -141,10 +144,16 @@ export default function SubmitComplaintPage() {
         description: description.trim(),
         evidenceName: fileAttachment?.name,
         evidenceUrl: fileAttachment?.previewUrl,
-        priority,
       });
       resetForm();
       setCreatedComplaintId(created.id);
+      setAiResult({
+        available: created.aiAvailable ?? false,
+        priority: created.priority,
+        score: created.priorityScore ?? 0,
+        summary: created.aiSummary,
+        reason: created.aiReason,
+      });
     } catch (error) {
       setErrors((previous) => ({
         ...previous,
@@ -161,7 +170,7 @@ export default function SubmitComplaintPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6 pb-8">
+    <div className="mx-auto flex w-full max-w-5xl min-h-0 flex-col gap-6 pb-2">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
           <Link
@@ -189,7 +198,8 @@ export default function SubmitComplaintPage() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <form onSubmit={handleSubmit} className="flex h-[min(54rem,calc(100dvh-17rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <section className="border-b border-slate-200 p-5 sm:p-7 dark:border-slate-800">
           <div className="mb-6 flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400"><FileText className="h-4 w-4" /></div>
@@ -208,13 +218,6 @@ export default function SubmitComplaintPage() {
                   {CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                 </select>
                 <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Usually routed to <span className="font-semibold text-slate-700 dark:text-slate-300">{CATEGORIES.find((item) => item.id === category)?.department}</span></p>
-              </div>
-              <div>
-                <label htmlFor="priority" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Priority suggestion</label>
-                <select id="priority" value={priority} onChange={(event) => setPriority(event.target.value as Priority)} className={inputClass}>
-                  <option value="low">Low - Routine maintenance</option><option value="medium">Medium - Standard issue</option><option value="high">High - Disrupts classes or stay</option><option value="critical">Critical - Immediate safety, water, or power concern</option>
-                </select>
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Administration confirms priority during verification.</p>
               </div>
             </div>
             <div>
@@ -235,23 +238,44 @@ export default function SubmitComplaintPage() {
 
         <section className="p-5 sm:p-7">
           <div className="mb-6 flex items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400"><Paperclip className="h-4 w-4" /></div><div><h2 className="text-base font-bold text-slate-900 dark:text-white">Supporting evidence <span className="font-normal text-slate-400">(optional)</span></h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">A photo can help administration verify the issue faster.</p></div></div>
-          <label htmlFor="evidence" onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} className={cn("block cursor-pointer rounded-2xl border border-dashed p-6 text-center transition", isDragging ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30" : "border-slate-300 bg-slate-50/70 hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-slate-700 dark:bg-slate-950/40 dark:hover:bg-indigo-950/20") }>
+          <label htmlFor="evidence" onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} className={cn("block cursor-pointer rounded-2xl border border-dashed p-5 text-center transition", isDragging ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30" : "border-slate-300 bg-slate-50/70 hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-slate-700 dark:bg-slate-950/40 dark:hover:bg-indigo-950/20") }>
             <input ref={fileInputRef} id="evidence" type="file" accept="image/*,application/pdf" onChange={handleFileChange} className="sr-only" />
-            {fileAttachment ? <div className="mx-auto flex max-w-md items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-3 text-left dark:border-slate-700 dark:bg-slate-900"><div className="flex min-w-0 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400">{fileAttachment.previewUrl ? <img src={fileAttachment.previewUrl} alt="Selected evidence preview" className="h-full w-full object-cover" /> : <FileText className="h-5 w-5" />}</div><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{fileAttachment.name}</p><p className="mt-0.5 text-xs text-emerald-600">Selected locally - {fileAttachment.size}</p></div></div><button type="button" onClick={(event) => { event.preventDefault(); removeAttachment(); }} aria-label="Remove selected evidence" className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"><Trash2 className="h-4 w-4" /></button></div> : <><UploadCloud className="mx-auto h-8 w-8 text-indigo-500" /><p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Drop a file here or browse</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">PNG, JPG, or PDF up to 5 MB</p></>}
+            <UploadCloud className="mx-auto h-8 w-8 text-indigo-500" />
+            <p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Drop a file here or <span className="text-indigo-600 dark:text-indigo-400">browse</span></p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">PNG, JPG, or PDF | Maximum 5 MB</p>
           </label>
+          {fileAttachment && <EvidencePreview attachment={fileAttachment} onRemove={removeAttachment} />}
           <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Info className="h-3.5 w-3.5" /> Evidence is previewed locally. It is not saved to Supabase Storage until upload support is configured.</p>
           {errors.file && <p role="alert" className="mt-2 text-xs font-medium text-rose-600">{errors.file}</p>}
         </section>
+        </div>
 
         <footer className="flex flex-col gap-4 border-t border-slate-200 bg-slate-50/70 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-7 dark:border-slate-800 dark:bg-slate-950/40">
-          <div className="flex items-start gap-2.5 text-xs leading-5 text-slate-500 dark:text-slate-400"><Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" /><span>Every complaint starts as <strong className="font-semibold text-slate-700 dark:text-slate-300">Awaiting Verification</strong>. The administration reviews it before dispatch.</span></div>
+          <div className="flex items-start gap-2.5 text-xs leading-5 text-slate-500 dark:text-slate-400"><Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" /><span>Valid categories are automatically routed to their department. Administrators oversee the campus and handle exceptions.</span></div>
           <div className="flex shrink-0 gap-2"><button type="button" onClick={handleCancel} disabled={isSubmitting} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">Cancel</button><button type="submit" disabled={isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60">{isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin" />Submitting...</> : <><Check className="h-4 w-4" />Submit complaint</>}</button></div>
         </footer>
       </form>
 
       <Modal isOpen={discardModalOpen} onClose={() => setDiscardModalOpen(false)} title="Discard this draft?" maxWidth="sm"><div className="space-y-4"><p className="text-sm leading-6 text-slate-600 dark:text-slate-400">Your changes have not been submitted. Discard this draft and return to the dashboard?</p><div className="flex justify-end gap-2"><button type="button" onClick={() => setDiscardModalOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">Continue editing</button><button type="button" onClick={() => { setDiscardModalOpen(false); resetForm(); router.push("/student"); }} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white">Discard draft</button></div></div></Modal>
 
-      <Modal isOpen={Boolean(createdComplaintId)} onClose={() => router.push(`/student/complaints/${createdComplaintId}`)} title="Complaint submitted" maxWidth="md"><div className="space-y-5 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400"><CheckCircle2 className="h-7 w-7" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Tracking ID</p><p className="mt-2 break-all font-mono text-xl font-bold text-indigo-600 dark:text-indigo-400">{createdComplaintId}</p></div><p className="mx-auto max-w-sm text-sm leading-6 text-slate-500 dark:text-slate-400">Your complaint is waiting for administrative verification. Keep this ID for reference.</p><div className="grid gap-2 sm:grid-cols-3"><Link href={`/student/complaints/${createdComplaintId}`} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-semibold text-white hover:bg-indigo-700">Track complaint</Link><Link href="/student" className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Back to dashboard</Link><button type="button" onClick={() => setCreatedComplaintId(null)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Submit another</button></div></div></Modal>
+      <Modal isOpen={Boolean(createdComplaintId)} onClose={() => router.push(`/student/complaints/${createdComplaintId}`)} title="Complaint submitted" maxWidth="md"><div className="space-y-5 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400"><CheckCircle2 className="h-7 w-7" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Tracking ID</p><p className="mt-2 break-all font-mono text-xl font-bold text-indigo-600 dark:text-indigo-400">{createdComplaintId}</p></div><div className="mx-auto max-w-sm rounded-xl bg-indigo-50 p-3 text-left text-sm dark:bg-indigo-950/40"><p className="font-semibold text-indigo-900 dark:text-indigo-200">{aiResult?.available ? "AI priority suggestion" : "Fallback priority estimate"}: {aiResult?.priority} {aiResult?.score ? `(${aiResult.score}/100)` : ""}</p>{aiResult?.summary && <p className="mt-1 text-slate-600 dark:text-slate-300">{aiResult.summary}</p>}<p className="mt-1 text-xs text-slate-500">Department routing is determined securely by the server.</p></div><p className="mx-auto max-w-sm text-sm leading-6 text-slate-500 dark:text-slate-400">Your complaint is routed to the appropriate campus team. Keep this ID for reference.</p><div className="grid gap-2 sm:grid-cols-3"><Link href={`/student/complaints/${createdComplaintId}`} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-semibold text-white hover:bg-indigo-700">Track complaint</Link><Link href="/student" className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Back to dashboard</Link><button type="button" onClick={() => setCreatedComplaintId(null)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Submit another</button></div></div></Modal>
+    </div>
+  );
+}
+
+type EvidenceAttachment = { name: string; size: string; previewUrl?: string };
+
+function EvidencePreview({ attachment, onRemove }: { attachment: EvidenceAttachment; onRemove: () => void }) {
+  const isImage = Boolean(attachment.previewUrl);
+  return (
+    <div className="mx-auto mt-3 max-h-[180px] w-full max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex h-[112px] max-h-[112px] w-full items-center justify-center overflow-hidden bg-slate-100 p-2 dark:bg-slate-950">
+        {attachment.previewUrl ? <img src={attachment.previewUrl} alt={`Preview of ${attachment.name}`} className="max-h-full max-w-full object-contain" /> : <div className="flex flex-col items-center gap-2 text-slate-500 dark:text-slate-400"><FileText className="h-10 w-10 text-indigo-500" /><span className="text-xs font-medium">PDF document</span></div>}
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-3 border-t border-slate-200 p-3 dark:border-slate-700">
+        <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{attachment.name}</p><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{isImage ? "Image" : "Document"} | {attachment.size}</p></div>
+        <button type="button" onClick={onRemove} aria-label="Remove selected evidence" className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"><Trash2 className="h-4 w-4" /></button>
+      </div>
     </div>
   );
 }

@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 
     if (
       !profile ||
-      !["faculty", "department_authority"].includes(profile.role)
+      profile.role !== "department_authority"
     ) {
       return jsonError(
         "Only authorized department authorities can access these complaints.",
@@ -78,9 +78,9 @@ export async function GET(request: NextRequest) {
     // Pending complaints remain pending; visibility does not approve them.
     const { data: issues, error: issuesError } = await supabase
       .from("issues")
-      .select(
-        "id, title, description, category, location, priority, status, reporter_id, assigned_department, image_path, verification_status, verification_note, verified_at, created_at, updated_at"
-      )
+      .select("*")
+      // Department-first triage includes new reports, while rejection,
+      // clarification, and sensitive-review states never enter this queue.
       .in("verification_status", ["pending", "approved"])
       .eq("assigned_department", profile.department)
       .in("status", ["assigned", "in_progress", "resolved"])
@@ -94,10 +94,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const issueIds = issues.map((issue) => issue.id);
+    const { data: history } = issueIds.length
+      ? await supabase.from("campusfix_issue_status_history").select("*").in("issue_id", issueIds).order("created_at", { ascending: true })
+      : { data: [] };
+    const historyByIssue = new Map<string, typeof history>();
+    for (const event of history || []) {
+      historyByIssue.set(event.issue_id, [...(historyByIssue.get(event.issue_id) || []), event]);
+    }
     return NextResponse.json({
       department: profile.department,
       count: issues.length,
-      issues,
+      issues: issues.map((issue) => ({ ...issue, status_history: historyByIssue.get(issue.id) || [] })),
     });
   } catch (error) {
     console.error("Authority issues API error:", error);

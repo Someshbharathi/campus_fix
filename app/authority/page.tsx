@@ -31,6 +31,7 @@ import { PriorityBadge, ResolutionBadge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { StatCard } from "@/components/ui/stat-card";
 import { cn } from "@/lib/utils";
+import { getDepartmentDisplayName } from "@/lib/department-routing";
 
 export default function AuthorityDashboardPage() {
   const {
@@ -58,11 +59,12 @@ export default function AuthorityDashboardPage() {
   const [resolutionProofUrl, setResolutionProofUrl] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Filter complaints relevant to authorities (verified and forwarded/assigned)
+  // The department is the first work queue; pending intake is actionable while
+  // rejected, clarification, and sensitive-review states remain excluded.
   const authorityOrders = useMemo(() => {
     return complaints.filter((c) => {
-      // Must be verified (not rejected or awaiting verification)
-      if (c.verificationStatus !== "verified") return false;
+      if (!c.assignedDepartment || !["awaiting_verification", "verified"].includes(c.verificationStatus)) return false;
+      if (c.assignedDepartment !== userDepartment) return false;
 
       // Tab filter
       if (activeTab === "my_dept") {
@@ -96,22 +98,22 @@ export default function AuthorityDashboardPage() {
 
   // Metric counts
   const totalMyDept = complaints.filter(
-    (c) => c.verificationStatus === "verified" && c.assignedDepartment === userDepartment
+    (c) => ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment
   ).length;
 
   const inProgressCount = complaints.filter(
-    (c) => c.verificationStatus === "verified" && c.resolutionStatus === "in_progress"
+    (c) => ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment && c.resolutionStatus === "in_progress"
   ).length;
 
   const criticalUrgentCount = complaints.filter(
     (c) =>
-      c.verificationStatus === "verified" &&
+      ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment &&
       c.resolutionStatus !== "resolved" &&
       (c.priority === "critical" || c.priority === "high")
   ).length;
 
   const resolvedTotal = complaints.filter(
-    (c) => c.verificationStatus === "verified" && c.resolutionStatus === "resolved"
+    (c) => ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment && c.resolutionStatus === "resolved"
   ).length;
 
   // Actions
@@ -216,7 +218,7 @@ export default function AuthorityDashboardPage() {
                 {currentUser?.name || "Field Operations Lead"}
               </h1>
               <p className="text-xs text-slate-300 mt-0.5 flex flex-wrap items-center gap-2">
-                <span>Primary Department: <strong>{userDepartment}</strong></span>
+                <span>Primary Department: <strong>{getDepartmentDisplayName(userDepartment)}</strong></span>
                 <span>•</span>
                 <span>Campus Works & Technical Maintenance</span>
               </p>
@@ -233,7 +235,7 @@ export default function AuthorityDashboardPage() {
                   : "bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60"
               )}
             >
-              <span>{userDepartment}</span>
+              <span>{getDepartmentDisplayName(userDepartment)}</span>
               <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">
                 {totalMyDept}
               </span>
@@ -432,7 +434,7 @@ export default function AuthorityDashboardPage() {
                     <PriorityBadge priority={order.priority} size="sm" />
                     <ResolutionBadge status={order.resolutionStatus} size="sm" />
                     <span className="text-xs font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-md">
-                      {order.assignedDepartment || "General Works"}
+                      {getDepartmentDisplayName(order.assignedDepartment)}
                     </span>
                     {order.assignedPerson && (
                       <span className="text-xs text-slate-500 font-medium">

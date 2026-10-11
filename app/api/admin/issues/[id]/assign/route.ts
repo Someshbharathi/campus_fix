@@ -100,7 +100,8 @@ export async function POST(
       );
     }
 
-    // Only approved complaints can be assigned.
+    // Routed complaints may be reassigned without forcing administrator
+    // verification. Rejected, clarification, and sensitive-review items stay out.
     const { data: issue, error: issueError } = await supabase
       .from("issues")
       .select("id, verification_status, status")
@@ -116,9 +117,9 @@ export async function POST(
       return jsonError("Complaint not found or access denied.", 404);
     }
 
-    if (issue.verification_status !== "approved") {
+    if (!["pending", "approved"].includes(issue.verification_status)) {
       return jsonError(
-        "Only approved complaints can be assigned to a department.",
+        "This complaint is not eligible for department assignment.",
         409
       );
     }
@@ -129,10 +130,11 @@ export async function POST(
       .update({
         assigned_department: department,
         status: "assigned",
+        assigned_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
-      .eq("verification_status", "approved")
+      .in("verification_status", ["pending", "approved"])
       .select(
         "id, title, verification_status, assigned_department, status, updated_at"
       )

@@ -37,8 +37,10 @@ export default function AdminVerificationQueuePage() {
   // Filter queue for complaints awaiting verification or info requested
   const queue = complaints.filter(
     (c) =>
-      c.verificationStatus === "awaiting_verification" ||
-      c.verificationStatus === "info_requested"
+      (c.verificationStatus === "awaiting_verification" &&
+        (!c.assignedDepartment || c.routingException || c.priority === "critical")) ||
+      c.verificationStatus === "info_requested" ||
+      c.verificationStatus === "sensitive_review"
   );
 
   // Active dialog states

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
 import { CATEGORIES, DEPARTMENTS } from "@/lib/constants";
-import { ComplaintCategory } from "@/lib/types";
+import { getCanonicalDepartment } from "@/lib/department-routing";
 
 export default function AdminReportsPage() {
   const { complaints } = useCampusFix();
@@ -34,6 +34,30 @@ export default function AdminReportsPage() {
 
   const resolutionRate = total > 0 ? Math.round((resolvedCount / total) * 100) : 0;
   const verificationRate = total > 0 ? Math.round((verifiedCount / total) * 100) : 0;
+  const pendingRate = total > 0 ? Math.round((awaitingCount / total) * 100) : 0;
+  const resolvedDurations = complaints
+    .filter((item) => item.resolutionStatus === "resolved")
+    .map((item) => (new Date(item.resolvedAt || item.updatedAt).getTime() - new Date(item.submittedAt).getTime()) / 3_600_000)
+    .filter((hours) => Number.isFinite(hours) && hours >= 0);
+  const averageResolutionHours = resolvedDurations.length
+    ? (resolvedDurations.reduce((sum, hours) => sum + hours, 0) / resolvedDurations.length).toFixed(1)
+    : null;
+
+  const priorityStats = (["critical", "high", "medium", "low"] as const).map((priority) => ({
+    priority,
+    count: complaints.filter((item) => item.priority === priority).length,
+    percentage: total ? Math.round((complaints.filter((item) => item.priority === priority).length / total) * 100) : 0,
+  }));
+  const now = new Date();
+  const monthlyStats = Array.from({ length: 6 }, (_, index) => {
+    const month = new Date(now.getFullYear(), now.getMonth() - (5 - index), 1);
+    const count = complaints.filter((item) => {
+      const submitted = new Date(item.submittedAt);
+      return submitted.getFullYear() === month.getFullYear() && submitted.getMonth() === month.getMonth();
+    }).length;
+    return { label: month.toLocaleDateString(undefined, { month: "short" }), count };
+  });
+  const maxMonthlyCount = Math.max(1, ...monthlyStats.map((item) => item.count));
 
   // Category counts
   const categoryStats = useMemo(() => {
@@ -51,9 +75,10 @@ export default function AdminReportsPage() {
   // Department Workload counts
   const departmentStats = useMemo(() => {
     return DEPARTMENTS.map((dept) => {
-      const assigned = complaints.filter((c) => c.assignedDepartment === dept).length;
+      const canonicalDept = getCanonicalDepartment(dept);
+      const assigned = complaints.filter((c) => c.assignedDepartment === canonicalDept).length;
       const resolved = complaints.filter(
-        (c) => c.assignedDepartment === dept && c.resolutionStatus === "resolved"
+        (c) => c.assignedDepartment === canonicalDept && c.resolutionStatus === "resolved"
       ).length;
       return {
         department: dept,
@@ -134,10 +159,10 @@ export default function AdminReportsPage() {
           </span>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-slate-900 dark:text-slate-100">
-              18.4 hrs
+              {averageResolutionHours ? `${averageResolutionHours} hrs` : "—"}
             </span>
             <span className="text-xs text-sky-700 bg-sky-50 dark:bg-sky-950 px-2 py-0.5 rounded-md font-semibold">
-              Within 24h SLA
+              {resolvedDurations.length} resolved tickets
             </span>
           </div>
           <p className="mt-3 text-[11px] text-slate-400">
@@ -151,7 +176,7 @@ export default function AdminReportsPage() {
           </span>
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-amber-600 dark:text-amber-400">
-              {awaitingCount}
+            {awaitingCount} ({pendingRate}%)
             </span>
             <span className="text-xs text-amber-700 bg-amber-50 dark:bg-amber-950 px-2 py-0.5 rounded-md font-semibold">
               Needs Review
@@ -234,6 +259,30 @@ export default function AdminReportsPage() {
             })}
           </div>
         </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <section className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200"><PieChart className="h-4 w-4 text-indigo-600" />Priority distribution</h3>
+          {priorityStats.map(({ priority, count, percentage }) => (
+            <div key={priority}>
+              <div className="mb-1 flex justify-between text-xs font-semibold"><span className="capitalize">{priority}</span><span>{count} ({percentage}%)</span></div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${percentage}%` }} /></div>
+            </div>
+          ))}
+        </section>
+        <section className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200"><Calendar className="h-4 w-4 text-sky-600" />Complaints per month</h3>
+          <div className="grid h-36 grid-cols-6 items-end gap-3">
+            {monthlyStats.map((item) => (
+              <div key={item.label} className="flex h-full flex-col items-center justify-end gap-2">
+                <span className="text-[10px] font-semibold text-slate-500">{item.count}</span>
+                <div className="w-full rounded-t-md bg-sky-500" style={{ height: `${Math.max(5, (item.count / maxMonthlyCount) * 100)}%` }} />
+                <span className="text-[10px] text-slate-500">{item.label}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );

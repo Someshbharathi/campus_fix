@@ -137,7 +137,8 @@ export async function POST(
       return jsonError("Complaint not found or access denied.", 404);
     }
 
-    if (issue.verification_status !== "pending") {
+    const reviewableStates = ["pending", "sensitive_review"];
+    if (!reviewableStates.includes(issue.verification_status)) {
       return jsonError("This complaint has already been reviewed.", 409);
     }
 
@@ -151,7 +152,7 @@ export async function POST(
         verification_note: reviewNote || null,
       })
       .eq("id", id)
-      .eq("verification_status", "pending")
+      .eq("verification_status", issue.verification_status)
       .select(
         "id, title, verification_status, verified_by, verified_at, verification_note"
       )

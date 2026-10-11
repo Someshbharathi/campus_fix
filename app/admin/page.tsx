@@ -25,6 +25,7 @@ import { VerificationBadge, ResolutionBadge, PriorityBadge } from "@/components/
 import { CATEGORIES, DEPARTMENTS } from "@/lib/constants";
 import { Priority, ResolutionStatus, VerificationStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
 
 export default function AdminDashboardPage() {
   const { complaints, currentUser } = useCampusFix();
@@ -32,12 +33,10 @@ export default function AdminDashboardPage() {
   // Metric counts
   const totalCount = complaints.length;
   const awaitingVerificationCount = complaints.filter(
-    (c) => c.verificationStatus === "awaiting_verification"
+    (c) => c.routingException || !c.assignedDepartment || c.verificationStatus === "sensitive_review" || c.priority === "critical"
   ).length;
   const pendingAssignmentCount = complaints.filter(
-    (c) =>
-      c.verificationStatus === "verified" &&
-      (c.resolutionStatus === "pending_assignment" || !c.assignedDepartment)
+    (c) => c.resolutionStatus === "pending_assignment" && Boolean(c.assignedDepartment)
   ).length;
   const inProgressCount = complaints.filter(
     (c) => c.resolutionStatus === "in_progress"
@@ -45,7 +44,11 @@ export default function AdminDashboardPage() {
   const resolvedCount = complaints.filter(
     (c) => c.resolutionStatus === "resolved"
   ).length;
-  const overdueCount = complaints.filter((c) => c.isOverdue || c.priority === "critical").length;
+  const overdueCount = complaints.filter((c) =>
+    c.resolutionStatus !== "resolved" && c.resolutionStatus !== "rejected" &&
+    Date.now() - new Date(c.submittedAt).getTime() > 72 * 60 * 60 * 1000
+  ).length;
+  const criticalCount = complaints.filter((c) => c.priority === "critical").length;
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -78,12 +81,15 @@ export default function AdminDashboardPage() {
       }
 
       // Status
-      if (statusFilter !== "all" && item.resolutionStatus !== statusFilter) {
+      if (statusFilter === "overdue") {
+        if (item.resolutionStatus === "resolved" || item.resolutionStatus === "rejected" ||
+          Date.now() - new Date(item.submittedAt).getTime() <= 72 * 60 * 60 * 1000) return false;
+      } else if (statusFilter !== "all" && item.resolutionStatus !== statusFilter) {
         return false;
       }
 
       // Department
-      if (departmentFilter !== "all" && item.assignedDepartment !== departmentFilter) {
+      if (departmentFilter !== "all" && item.assignedDepartment !== getCanonicalDepartment(departmentFilter)) {
         return false;
       }
 
@@ -128,7 +134,7 @@ export default function AdminDashboardPage() {
             Administrator Oversight Console
           </h2>
           <p className="mt-1 text-sm text-slate-300 max-w-xl leading-relaxed">
-            Review incoming student grievance tickets, conduct initial verification, dispatch departmental technicians, and ensure SLA accountability.
+            Monitor campus issues, review exceptions, rebalance departments, escalate hazards, and track resolution performance.
           </p>
         </div>
 
@@ -138,13 +144,12 @@ export default function AdminDashboardPage() {
             className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold text-sm shadow-lg shadow-amber-600/30 transition-all hover:scale-105"
           >
             <CheckSquare className="h-5 w-5" />
-            <span>Review Verification Queue ({awaitingVerificationCount})</span>
+            <span>Review Exceptions ({awaitingVerificationCount})</span>
           </Link>
         </div>
       </div>
 
-      {/* 6 Metric Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 sm:gap-4">
         <StatCard
           title="Total"
           count={totalCount}
@@ -158,10 +163,10 @@ export default function AdminDashboardPage() {
           isActive={verificationFilter === "all" && statusFilter === "all"}
         />
         <StatCard
-          title="Awaiting Verify"
+          title="Review Queue"
           count={awaitingVerificationCount}
           icon={<Clock className="h-4 w-4" />}
-          subtitle="Needs review"
+          subtitle="Exceptions & hazards"
           colorScheme="amber"
           onClick={() => {
             setVerificationFilter("awaiting_verification");
@@ -170,13 +175,13 @@ export default function AdminDashboardPage() {
           isActive={verificationFilter === "awaiting_verification"}
         />
         <StatCard
-          title="Pending Assign"
+          title="Assigned"
           count={pendingAssignmentCount}
           icon={<UserCheck className="h-4 w-4" />}
-          subtitle="Verified tickets"
+          subtitle="Waiting for department"
           colorScheme="indigo"
           onClick={() => {
-            setVerificationFilter("verified");
+            setVerificationFilter("all");
             setStatusFilter("pending_assignment");
           }}
           isActive={statusFilter === "pending_assignment"}
@@ -206,8 +211,8 @@ export default function AdminDashboardPage() {
           isActive={statusFilter === "resolved"}
         />
         <StatCard
-          title="Critical / Urg"
-          count={overdueCount}
+          title="Critical"
+          count={criticalCount}
           icon={<AlertTriangle className="h-4 w-4" />}
           subtitle="Immediate hazard"
           colorScheme="rose"
@@ -215,6 +220,15 @@ export default function AdminDashboardPage() {
             setPriorityFilter("critical");
           }}
           isActive={priorityFilter === "critical"}
+        />
+        <StatCard
+          title="Overdue"
+          count={overdueCount}
+          icon={<Clock className="h-4 w-4" />}
+          subtitle="Open over 72 hours"
+          colorScheme="amber"
+          onClick={() => { setStatusFilter("overdue"); setVerificationFilter("all"); }}
+          isActive={statusFilter === "overdue"}
         />
       </div>
 
@@ -355,7 +369,7 @@ export default function AdminDashboardPage() {
                           {CATEGORIES.find((c) => c.id === item.category)?.label || item.category}
                         </span>
                         <span>•</span>
-                        <span>Dept: {item.assignedDepartment || "Unassigned"}</span>
+                        <span>Dept: {getDepartmentDisplayName(item.assignedDepartment)}</span>
                       </div>
                     </td>
 

@@ -24,36 +24,9 @@ export const CATEGORIES: {
       department: "Cleanliness & Sanitation",
       description: "Trash accumulation, uncleaned restrooms, corridor dust, pest control",
     },
-    {
-      id: "classroom",
-      label: "Classroom & Lab Facilities",
-      department: "Infrastructure & Civil Maintenance",
-      description: "Projectors, audio systems, broken desks, whiteboard issues, lab equipment",
-    },
-    {
-      id: "hostel",
-      label: "Hostel Issues",
-      department: "General Maintenance",
-      description: "Room maintenance, hot water supply, mess facility, furniture damage",
-    },
-    {
-      id: "network",
-      label: "Internet & Network",
-      department: "IT & Network Support",
-      description: "Wi-Fi connectivity, LAN port malfunction, firewall/portal login problems",
-    },
-    {
-      id: "safety",
-      label: "Safety & Security",
-      department: "General Maintenance",
-      description: "Broken locks, dim streetlights, fire extinguisher inspection, surveillance",
-    },
-    {
-      id: "maintenance",
-      label: "Maintenance & Repairs",
-      department: "Infrastructure & Civil Maintenance",
-      description: "Cracked walls, window glass replacement, door repair, lift maintenance",
-    },
+    { id: "infrastructure", label: "Infrastructure & Facilities", department: "Infrastructure & Civil Maintenance", description: "Buildings, classrooms, access ways, and structural repairs" },
+    { id: "internet", label: "Internet & Network", department: "IT & Network Support", description: "Wi-Fi, LAN, and campus network issues" },
+    { id: "equipment", label: "Equipment & Labs", department: "Equipment & Laboratory Maintenance", description: "Broken or unsafe campus and laboratory equipment" },
     {
       id: "other",
       label: "Other Campus Concerns",
@@ -93,9 +66,9 @@ export const VERIFICATION_STATUS_META: Record<
   { label: string; badgeClass: string; description: string }
 > = {
   awaiting_verification: {
-    label: "Awaiting Verification",
+    label: "Department Intake",
     badgeClass: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60",
-    description: "Under initial inspection by Campus Administration",
+    description: "Routed to the department while administrators oversee exceptions",
   },
   verified: {
     label: "Verified",
@@ -111,6 +84,11 @@ export const VERIFICATION_STATUS_META: Record<
     label: "Info Requested",
     badgeClass: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800/60",
     description: "Admin requested additional evidence or clarification",
+  },
+  sensitive_review: {
+    label: "Sensitive Review",
+    badgeClass: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-950/40 dark:text-fuchsia-300 dark:border-fuchsia-800/60",
+    description: "Held for private administrative review",
   },
 };
 
@@ -129,9 +107,9 @@ export const RESOLUTION_STATUS_META: Record<
     description: "Pending verification review",
   },
   pending_assignment: {
-    label: "Pending Assignment",
+    label: "Assigned",
     badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-400 dark:border-indigo-800/60",
-    description: "Verified; queued for department assignment",
+    description: "Automatically routed to the responsible department",
   },
   in_progress: {
     label: "In Progress",

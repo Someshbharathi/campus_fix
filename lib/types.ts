@@ -1,10 +1,11 @@
-export type Role = "student" | "admin" | "department_authority" | "faculty" | "authority";
+export type Role = "student" | "admin" | "department_authority";
 
 export type VerificationStatus =
   | "awaiting_verification"
   | "verified"
   | "rejected"
-  | "info_requested";
+  | "info_requested"
+  | "sensitive_review";
 
 export type ResolutionStatus =
   | "submitted"
@@ -72,6 +73,12 @@ export interface Complaint {
   verificationDate?: string;
   resolutionStatus: ResolutionStatus;
   priority: Priority;
+  priorityScore?: number;
+  aiCategory?: ComplaintCategory;
+  aiSummary?: string;
+  aiReason?: string;
+  aiAvailable?: boolean;
+  routingException?: boolean;
   assignedDepartment?: string;
   assignedPerson?: string;
   submittedBy: {
@@ -87,6 +94,7 @@ export interface Complaint {
   resolutionProofUrl?: string;
   resolutionProofName?: string;
   resolvedAt?: string;
+  assignedAt?: string;
   additionalInfoRequested?: string;
   additionalInfoProvided?: string;
   isOverdue?: boolean;
