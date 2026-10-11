@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import { getDepartmentForCategory } from "@/lib/department-routing";
 import { authorizeStudentSubmission } from "@/lib/auth/roles";
 import { analyzeComplaint, isCriticalSafetyReport, scorePriority } from "@/lib/ai/complaint-analysis";
@@ -10,6 +11,19 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const complaintMediaBucket = "campusfix-complaint-media";
+const mediaExtensions: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/avif": "avif",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/quicktime": "mov",
+  "video/ogg": "ogv",
+};
 
 function jsonError(
   message: string,
@@ -149,7 +163,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const issueIds = (data || []).map((issue) => issue.id);
+    const issueRows = data || [];
+    const mediaPaths = [...new Set(issueRows
+      .map((issue) => issue.image_path)
+      .filter((path): path is string => Boolean(path) && !/^https?:\/\//i.test(path)))];
+    const signedMediaByPath = new Map<string, string>();
+    if (mediaPaths.length) {
+      const { data: signedMedia, error: signedMediaError } = await auth.client.storage
+        .from(complaintMediaBucket)
+        .createSignedUrls(mediaPaths, 60 * 60);
+      if (signedMediaError) {
+        console.warn("Issue media signing failed:", { code: signedMediaError.name, message: signedMediaError.message });
+      } else {
+        signedMedia?.forEach((entry, index) => {
+          if (entry.signedUrl) signedMediaByPath.set(mediaPaths[index], entry.signedUrl);
+        });
+      }
+    }
+
+    const issueIds = issueRows.map((issue) => issue.id);
     const { data: history } = issueIds.length
       ? await auth.client.from("issue_updates")
         .select("id, issue_id, actor_id, old_status, new_status, comment, created_at")
@@ -175,8 +207,11 @@ export async function GET(request: NextRequest) {
       }]);
     }
     return NextResponse.json({
-      issues: (data || []).map((issue) => ({
+      issues: issueRows.map((issue) => ({
         ...issue,
+        ...(issue.image_path && signedMediaByPath.has(issue.image_path)
+          ? { image_path: signedMediaByPath.get(issue.image_path) }
+          : {}),
         status_history: historyByIssue.get(issue.id) || [],
         similar_complaints: similaritiesByIssue.get(issue.id) || [],
         // These values are scoped to the similarity rows this caller can see.
@@ -212,21 +247,41 @@ export async function POST(request: NextRequest) {
 
     // 2. Parse the request.
     let body: Record<string, unknown>;
+    let attachmentFile: File | null = null;
+    let attachmentMediaType: string | null = null;
 
     try {
-      const parsed: unknown = await request.json();
-
-      if (
-        typeof parsed !== "object" ||
-        parsed === null ||
-        Array.isArray(parsed)
-      ) {
-        return jsonError("Request body must be a JSON object.", 400);
+      if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+        const formData = await request.formData();
+        body = {
+          title: formData.get("title"),
+          description: formData.get("description"),
+          location: formData.get("location"),
+        };
+        const fileValue = formData.get("attachment");
+        if (fileValue instanceof File) attachmentFile = fileValue;
+        else if (fileValue !== null) return jsonError("Attachment must be a file.", 400);
+      } else {
+        const parsed: unknown = await request.json();
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          return jsonError("Request body must be a JSON object.", 400);
+        }
+        body = parsed as Record<string, unknown>;
       }
-
-      body = parsed as Record<string, unknown>;
     } catch {
-      return jsonError("Request body must contain valid JSON.", 400);
+      return jsonError("Request body must contain valid form data or JSON.", 400);
+    }
+
+    if (attachmentFile) {
+      attachmentMediaType = attachmentFile.type.split(";")[0].toLowerCase();
+      const isImage = attachmentMediaType.startsWith("image/");
+      const maxBytes = isImage ? 10 * 1024 * 1024 : 50 * 1024 * 1024;
+      if (!mediaExtensions[attachmentMediaType]) {
+        return jsonError("Use a supported photo or video format.", 400);
+      }
+      if (attachmentFile.size <= 0 || attachmentFile.size > maxBytes) {
+        return jsonError(`Attachment is empty or exceeds the ${isImage ? "10 MB" : "50 MB"} limit.`, 400);
+      }
     }
 
     console.info("[issues:create] request received", {
@@ -235,7 +290,7 @@ export async function POST(request: NextRequest) {
       titleLength: typeof body.title === "string" ? body.title.trim().length : null,
       descriptionLength: typeof body.description === "string" ? body.description.trim().length : null,
       locationLength: typeof body.location === "string" ? body.location.trim().length : null,
-      evidenceProvided: typeof body.evidenceName === "string" || typeof body.evidenceUrl === "string",
+      evidenceProvided: Boolean(attachmentFile),
       priorityProvidedByClient: body.priority !== undefined,
     });
 
@@ -365,6 +420,31 @@ export async function POST(request: NextRequest) {
       priorityFactors.frequency,
     );
 
+    // Upload through the same authenticated user client before inserting the
+    // complaint, so image_path is included in the student's own INSERT.
+    let uploadedAttachmentPath: string | null = null;
+    if (attachmentFile) {
+      stage = "attachment_upload";
+      uploadedAttachmentPath = `${user.id}/${randomUUID()}.${mediaExtensions[attachmentMediaType!]}`;
+      const { error: uploadError } = await supabase.storage
+        .from(complaintMediaBucket)
+        .upload(uploadedAttachmentPath, await attachmentFile.arrayBuffer(), {
+          contentType: attachmentMediaType!,
+          cacheControl: "3600",
+          upsert: false,
+        });
+      if (uploadError) {
+        console.error("[issues:create] attachment upload failed", {
+          userId: user.id,
+          code: uploadError.name,
+          message: uploadError.message,
+        });
+        uploadedAttachmentPath = null;
+        return jsonError("Could not upload the attachment. Check the file and try again.", 400, undefined, undefined, stage);
+      }
+    }
+    stage = "database_insert";
+
     // 6. Insert the issue.
     // reporter_id is always taken from the verified user.
     const issuePayload = {
@@ -376,6 +456,7 @@ export async function POST(request: NextRequest) {
           assigned_department: assignedDepartment,
           routing_exception: false,
           status: assignedDepartment ? "assigned" : "reported",
+          ...(uploadedAttachmentPath ? { image_path: uploadedAttachmentPath } : {}),
           priority: priorityResult.priority,
           priority_level: priorityResult.priority,
           verification_status: "pending",
@@ -412,6 +493,10 @@ export async function POST(request: NextRequest) {
         reporterMatchesAuthUid: databaseAuthUid === issuePayload.reporter_id,
       });
       if (databaseAuthUid !== user.id) {
+        if (uploadedAttachmentPath) {
+          const { error: cleanupError } = await supabase.storage.from(complaintMediaBucket).remove([uploadedAttachmentPath]);
+          if (cleanupError) console.warn("[issues:create] identity-check attachment cleanup failed", { code: cleanupError.name, message: cleanupError.message });
+        }
         return jsonError(
           "The authenticated identity seen by PostgreSQL does not match the verified Supabase user.",
           401,
@@ -462,6 +547,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (issueInsertError) {
+      if (uploadedAttachmentPath) {
+        const { error: cleanupError } = await supabase.storage.from(complaintMediaBucket).remove([uploadedAttachmentPath]);
+        if (cleanupError) console.warn("[issues:create] orphan attachment cleanup failed", { code: cleanupError.name, message: cleanupError.message });
+      }
       const constraint = issueInsertError.message.match(/constraint ["']?([\w.]+)["']?/i)?.[1];
       const rlsDenied = issueInsertError.code === "42501";
       const functionFailure = issueInsertError.code === "P0001";
@@ -567,6 +656,20 @@ export async function POST(request: NextRequest) {
       }
     } else if (embedding) {
       console.warn("[issues:create] embedding generated but not stored: SUPABASE_SERVICE_ROLE_KEY is not configured");
+    }
+
+    if (uploadedAttachmentPath) {
+      const { data: signedMedia, error: signedMediaError } = await supabase.storage
+        .from(complaintMediaBucket)
+        .createSignedUrl(uploadedAttachmentPath, 60 * 60);
+      if (signedMediaError) {
+        console.warn("[issues:create] attachment saved but preview URL could not be created", {
+          code: signedMediaError.name,
+          message: signedMediaError.message,
+        });
+      } else if (signedMedia?.signedUrl) {
+        issue = { ...issue, image_path: signedMedia.signedUrl };
+      }
     }
 
     // 7. Return the new independent complaint and non-identifying similarity metadata.

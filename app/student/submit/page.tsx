@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Building2,
+  Camera,
   Check,
   CheckCircle2,
   FileText,
@@ -15,8 +16,11 @@ import {
   Loader2,
   MapPin,
   Paperclip,
+  Play,
+  Square,
   Trash2,
-  UploadCloud,
+  Upload,
+  Video,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
 import { CAMPUS_LOCATIONS } from "@/lib/constants";
@@ -27,26 +31,36 @@ import { cn } from "@/lib/utils";
 const inputClass =
   "h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
 
+type EvidenceAttachment = { file: File; previewUrl: string; kind: "image" | "video" };
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"]);
+const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/ogg"]);
+
 export default function SubmitComplaintPage() {
   const router = useRouter();
   const { submitComplaint } = useCampusFix();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
 
   const [title, setTitle] = useState("");
   const [campusLocation, setCampusLocation] = useState(CAMPUS_LOCATIONS[0]);
   const [specificLocation, setSpecificLocation] = useState("");
   const [description, setDescription] = useState("");
-  const [fileAttachment, setFileAttachment] = useState<{
-    name: string;
-    size: string;
-    previewUrl?: string;
-  } | null>(null);
+  const [fileAttachment, setFileAttachment] = useState<EvidenceAttachment | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [createdComplaintId, setCreatedComplaintId] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<{ available: boolean; priority: string; score: number; category?: string; summary?: string; reason?: string } | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingHasAudio, setRecordingHasAudio] = useState(true);
 
   useEffect(() => {
     const previewUrl = fileAttachment?.previewUrl;
@@ -54,6 +68,62 @@ export default function SubmitComplaintPage() {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
   }, [fileAttachment?.previewUrl]);
+
+  useEffect(() => {
+    if (!captureOpen) return;
+    let cancelled = false;
+    const startCamera = async () => {
+      setCameraError("");
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError("Camera capture is not supported by this browser. Use Upload to choose media.");
+        return;
+      }
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: true,
+        });
+        setRecordingHasAudio(true);
+      } catch (withAudioError) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" } },
+            audio: false,
+          });
+          setRecordingHasAudio(false);
+        } catch {
+          const reason = withAudioError instanceof DOMException && withAudioError.name === "NotAllowedError"
+            ? "Camera or microphone permission was denied. Allow camera access in your browser settings, or use Upload."
+            : "Could not open the camera. Check that it is connected and not being used by another app.";
+          if (!cancelled) setCameraError(reason);
+          return;
+        }
+      }
+      if (cancelled) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      cameraStreamRef.current = stream;
+      setCameraStream(stream);
+    };
+    void startCamera();
+    return () => {
+      cancelled = true;
+      if (recorderRef.current?.state === "recording") {
+        recorderRef.current.onstop = null;
+        recorderRef.current.ondataavailable = null;
+        recorderRef.current.onerror = null;
+        recorderRef.current.stop();
+      }
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    };
+  }, [captureOpen]);
+
+  useEffect(() => {
+    if (cameraVideoRef.current && cameraStream) cameraVideoRef.current.srcObject = cameraStream;
+  }, [cameraStream]);
 
   const maxDescriptionChars = 1000;
 
@@ -65,27 +135,28 @@ export default function SubmitComplaintPage() {
 
   const selectFile = (file?: File) => {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
+    const mediaType = file.type.split(";")[0].toLowerCase();
+    const normalizedFile = mediaType === file.type ? file : new File([file], file.name, { type: mediaType });
+    const kind = ALLOWED_IMAGE_TYPES.has(mediaType) ? "image" : ALLOWED_VIDEO_TYPES.has(mediaType) ? "video" : null;
+    if (!kind) {
       setErrors((previous) => ({
         ...previous,
-        file: "This file is larger than 5 MB. Choose a smaller file.",
+        file: "Choose a supported photo (JPG, PNG, WebP, HEIC, or AVIF) or video (MP4, WebM, or MOV).",
+      }));
+      return;
+    }
+    const maxBytes = kind === "image" ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES;
+    if (file.size > maxBytes) {
+      setErrors((previous) => ({
+        ...previous,
+        file: `This ${kind} is too large. Maximum size is ${kind === "image" ? "10 MB" : "50 MB"}.`,
       }));
       return;
     }
 
-    if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
-      setErrors((previous) => ({
-        ...previous,
-        file: "Use a PNG, JPG, or PDF file.",
-      }));
-      return;
-    }
-
-    setFileAttachment({
-      name: file.name,
-      size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
-    });
+    setFileAttachment({ file: normalizedFile, previewUrl: URL.createObjectURL(normalizedFile), kind });
+    setCaptureOpen(false);
+    setCameraStream(null);
     setErrors((previous) => ({ ...previous, file: "" }));
   };
 
@@ -93,15 +164,71 @@ export default function SubmitComplaintPage() {
     selectFile(event.target.files?.[0]);
   };
 
-  const handleDrop = (event: React.DragEvent<HTMLLabelElement>) => {
-    event.preventDefault();
-    setIsDragging(false);
-    selectFile(event.dataTransfer.files?.[0]);
-  };
-
   const removeAttachment = () => {
     setFileAttachment(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const closeCapture = () => {
+    if (recorderRef.current?.state === "recording") {
+      recorderRef.current.onstop = null;
+      recorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setCameraStream(null);
+    setCaptureOpen(false);
+  };
+
+  const capturePhoto = () => {
+    const video = cameraVideoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setCameraError("The camera is not ready yet. Try again in a moment.");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (blob) selectFile(new File([blob], `campusfix-photo-${Date.now()}.jpg`, { type: "image/jpeg" }));
+      else setCameraError("Could not capture the photo. Please try again.");
+    }, "image/jpeg", 0.92);
+  };
+
+  const startRecording = () => {
+    const stream = cameraStreamRef.current;
+    if (!stream || typeof MediaRecorder === "undefined") {
+      setCameraError("Video recording is not supported by this browser. Use Upload to choose a video.");
+      return;
+    }
+    const mimeType = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"]
+      .find((type) => MediaRecorder.isTypeSupported(type));
+    try {
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      recordingChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) recordingChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => setCameraError("Video recording stopped unexpectedly. Try recording again.");
+      recorder.onstop = () => {
+        const type = (recorder.mimeType || "video/webm").split(";")[0];
+        const videoFile = new File(recordingChunksRef.current, `campusfix-video-${Date.now()}.${type.includes("mp4") ? "mp4" : "webm"}`, { type });
+        recordingChunksRef.current = [];
+        if (videoFile.size) selectFile(videoFile);
+        else setCameraError("The recording was empty. Please try again.");
+      };
+      recorder.start(1000);
+      setIsRecording(true);
+      setCameraError("");
+    } catch {
+      setCameraError("Could not start video recording on this device.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+    setIsRecording(false);
   };
 
   const resetForm = () => {
@@ -115,6 +242,7 @@ export default function SubmitComplaintPage() {
 
   const validate = () => {
     const nextErrors: Record<string, string> = {};
+    if (isRecording) nextErrors.file = "Stop the video recording before submitting.";
     if (!title.trim()) nextErrors.title = "Add a short title for the issue.";
     else if (title.trim().length < 8) nextErrors.title = "Use at least 8 characters so the issue is easy to identify.";
     if (!specificLocation.trim()) nextErrors.specificLocation = "Add a room, floor, lab, or other exact spot.";
@@ -139,8 +267,7 @@ export default function SubmitComplaintPage() {
         campusLocation,
         specificLocation: specificLocation.trim(),
         description: description.trim(),
-        evidenceName: fileAttachment?.name,
-        evidenceUrl: fileAttachment?.previewUrl,
+        attachment: fileAttachment?.file,
       });
       resetForm();
       setCreatedComplaintId(created.id);
@@ -232,14 +359,29 @@ export default function SubmitComplaintPage() {
 
         <section className="p-5 sm:p-7">
           <div className="mb-6 flex items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400"><Paperclip className="h-4 w-4" /></div><div><h2 className="text-base font-bold text-slate-900 dark:text-white">Supporting evidence <span className="font-normal text-slate-400">(optional)</span></h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">A photo can help administration verify the issue faster.</p></div></div>
-          <label htmlFor="evidence" onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} className={cn("block cursor-pointer rounded-2xl border border-dashed p-5 text-center transition", isDragging ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30" : "border-slate-300 bg-slate-50/70 hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-slate-700 dark:bg-slate-950/40 dark:hover:bg-indigo-950/20") }>
-            <input ref={fileInputRef} id="evidence" type="file" accept="image/*,application/pdf" onChange={handleFileChange} className="sr-only" />
-            <UploadCloud className="mx-auto h-8 w-8 text-indigo-500" />
-            <p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Drop a file here or <span className="text-indigo-600 dark:text-indigo-400">browse</span></p>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">PNG, JPG, or PDF | Maximum 5 MB</p>
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={() => { setCameraError(""); setCameraStream(null); setCaptureOpen(true); }} disabled={isSubmitting} className="flex min-h-24 items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/20">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400"><Camera className="h-5 w-5" /></span>
+              <span><span className="block text-sm font-semibold text-slate-900 dark:text-white">Capture</span><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Take a photo or record a video</span></span>
+            </button>
+            <button type="button" onClick={() => { closeCapture(); fileInputRef.current?.click(); }} disabled={isSubmitting} className="flex min-h-24 items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:hover:border-indigo-700 dark:hover:bg-indigo-950/20">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600 dark:bg-sky-950/50 dark:text-sky-400"><Upload className="h-5 w-5" /></span>
+              <span><span className="block text-sm font-semibold text-slate-900 dark:text-white">Upload</span><span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Choose an existing photo or video</span></span>
+            </button>
+            <input ref={fileInputRef} id="evidence" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif,video/mp4,video/webm,video/quicktime,video/ogg" onChange={handleFileChange} className="sr-only" />
+          </div>
+          {captureOpen && <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/60">
+            <div className="mb-3 flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900 dark:text-white">Camera capture</p><p className="text-xs text-slate-500 dark:text-slate-400">Allow camera access when your browser asks.</p></div><button type="button" onClick={closeCapture} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800">Close</button></div>
+            {cameraStream ? <video ref={cameraVideoRef} autoPlay playsInline muted className="max-h-80 w-full rounded-xl bg-black object-contain" /> : <div className="flex min-h-40 items-center justify-center rounded-xl bg-slate-200 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">{cameraError || "Opening camera…"}</div>}
+            {cameraError && cameraStream && <p role="alert" className="mt-2 text-sm text-rose-600">{cameraError}</p>}
+            {cameraStream && <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={capturePhoto} disabled={isRecording} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"><Camera className="h-4 w-4" />Take photo</button>
+              {isRecording ? <button type="button" onClick={stopRecording} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><Square className="h-4 w-4" />Stop recording</button> : <button type="button" onClick={startRecording} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"><Play className="h-4 w-4" />Record video</button>}
+              <span className="self-center text-xs text-slate-500 dark:text-slate-400">Video audio {recordingHasAudio ? "is enabled when permitted" : "is off"}.</span>
+            </div>}
+          </div>}
           {fileAttachment && <EvidencePreview attachment={fileAttachment} onRemove={removeAttachment} />}
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Info className="h-3.5 w-3.5" /> Evidence is previewed locally. It is not saved to Supabase Storage until upload support is configured.</p>
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Info className="h-3.5 w-3.5 shrink-0" />One attachment per complaint. Photos up to 10 MB; videos up to 50 MB.</p>
           {errors.file && <p role="alert" className="mt-2 text-xs font-medium text-rose-600">{errors.file}</p>}
         </section>
         </div>
@@ -257,17 +399,15 @@ export default function SubmitComplaintPage() {
   );
 }
 
-type EvidenceAttachment = { name: string; size: string; previewUrl?: string };
-
 function EvidencePreview({ attachment, onRemove }: { attachment: EvidenceAttachment; onRemove: () => void }) {
-  const isImage = Boolean(attachment.previewUrl);
+  const { file, kind, previewUrl } = attachment;
   return (
-    <div className="mx-auto mt-3 max-h-[180px] w-full max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex h-[112px] max-h-[112px] w-full items-center justify-center overflow-hidden bg-slate-100 p-2 dark:bg-slate-950">
-        {attachment.previewUrl ? <img src={attachment.previewUrl} alt={`Preview of ${attachment.name}`} className="max-h-full max-w-full object-contain" /> : <div className="flex flex-col items-center gap-2 text-slate-500 dark:text-slate-400"><FileText className="h-10 w-10 text-indigo-500" /><span className="text-xs font-medium">PDF document</span></div>}
+    <div className="mx-auto mt-3 w-full max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex max-h-80 min-h-32 w-full items-center justify-center overflow-hidden bg-slate-100 p-2 dark:bg-slate-950">
+        {kind === "image" ? <img src={previewUrl} alt={`Preview of ${file.name}`} className="max-h-72 max-w-full object-contain" /> : <video src={previewUrl} controls playsInline className="max-h-72 max-w-full" />}
       </div>
       <div className="flex min-w-0 items-center justify-between gap-3 border-t border-slate-200 p-3 dark:border-slate-700">
-        <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{attachment.name}</p><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{isImage ? "Image" : "Document"} | {attachment.size}</p></div>
+        <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{file.name}</p><p className="mt-0.5 flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">{kind === "image" ? <Camera className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}{kind === "image" ? "Photo" : "Video"} · {(file.size / (1024 * 1024)).toFixed(2)} MB</p></div>
         <button type="button" onClick={onRemove} aria-label="Remove selected evidence" className="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"><Trash2 className="h-4 w-4" /></button>
       </div>
     </div>

@@ -36,6 +36,7 @@ interface CampusFixContextType {
     specificLocation: string;
     evidenceName?: string;
     evidenceUrl?: string;
+    attachment?: File;
     priority?: Priority;
   }) => Promise<Complaint>;
   verifyComplaint: (id: string, verified: boolean, reason?: string) => Promise<void>;
@@ -637,20 +638,23 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     specificLocation: string;
     evidenceName?: string;
     evidenceUrl?: string;
+    attachment?: File;
     priority?: Priority;
   }): Promise<Complaint> => {
     const { data: session } = await createClient().auth.getSession();
     const token = session.session?.access_token;
     if (!token) throw new Error("Your session has expired. Please sign in again.");
 
+    const formData = new FormData();
+    formData.set("title", data.title);
+    formData.set("description", data.description);
+    formData.set("location", `${data.campusLocation} - ${data.specificLocation}`);
+    if (data.attachment) formData.set("attachment", data.attachment, data.attachment.name);
+
     const response = await fetch("/api/issues", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        title: data.title,
-        description: data.description,
-        location: `${data.campusLocation} - ${data.specificLocation}`,
-      }),
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
     });
     if (!response.ok) throw new Error(await apiError(response));
     const payload = (await response.json()) as {

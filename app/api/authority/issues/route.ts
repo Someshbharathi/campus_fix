@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DEPARTMENT_OPTIONS, getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
 
+const complaintMediaBucket = "campusfix-complaint-media";
+
 function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
@@ -109,6 +111,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const mediaPaths = [...new Set((issues || [])
+      .map((issue) => issue.image_path)
+      .filter((path): path is string => Boolean(path) && !/^https?:\/\//i.test(path)))];
+    const signedMediaByPath = new Map<string, string>();
+    if (mediaPaths.length) {
+      const { data: signedMedia, error: signedMediaError } = await supabase.storage
+        .from(complaintMediaBucket)
+        .createSignedUrls(mediaPaths, 60 * 60);
+      if (signedMediaError) {
+        console.warn("Authority issue media signing failed:", { code: signedMediaError.name, message: signedMediaError.message });
+      } else {
+        signedMedia?.forEach((entry, index) => {
+          if (entry.signedUrl) signedMediaByPath.set(mediaPaths[index], entry.signedUrl);
+        });
+      }
+    }
+
     const issueIds = issues.map((issue) => issue.id);
     const { data: history } = issueIds.length
       ? await supabase.from("issue_updates")
@@ -140,6 +159,9 @@ export async function GET(request: NextRequest) {
       count: issues.length,
       issues: issues.map((issue) => ({
         ...issue,
+        ...(issue.image_path && signedMediaByPath.has(issue.image_path)
+          ? { image_path: signedMediaByPath.get(issue.image_path) }
+          : {}),
         status_history: historyByIssue.get(issue.id) || [],
         similar_complaints: similaritiesByIssue.get(issue.id) || [],
         // Derive aggregates from this authority's RLS-visible links only.
