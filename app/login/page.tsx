@@ -130,7 +130,7 @@ export default function LoginPage() {
           </button>
           <button
             type="button"
-            onClick={() => handleRoleChange("faculty")}
+            onClick={() => handleRoleChange("department_authority")}
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all",
               isAuthorityRole(role)
@@ -139,7 +139,7 @@ export default function LoginPage() {
             )}
           >
             <Wrench className="h-4 w-4 shrink-0" />
-            <span className="truncate">Faculty</span>
+            <span className="truncate">Department Authority</span>
           </button>
         </div>
 
@@ -256,7 +256,7 @@ export default function LoginPage() {
                 {role === "admin"
                   ? "Admin"
                   : isAuthorityRole(role)
-                  ? "Faculty"
+                  ? "Department Authority"
                   : "Student"}
               </span>
             )}
@@ -287,11 +287,11 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleRoleChange("faculty")}
+              onClick={() => handleRoleChange("department_authority")}
               className="py-1.5 px-2 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors flex items-center justify-center gap-1"
             >
               <CheckCircle className="h-3 w-3 text-sky-500 shrink-0" />
-              <span className="truncate">Faculty: Er. Rajesh</span>
+              <span className="truncate">Department Authority: Er. Rajesh</span>
             </button>
           </div>
         </div>
@@ -300,7 +300,7 @@ export default function LoginPage() {
       {/* Security notice footer */}
       <div className="mt-6 text-center text-xs text-slate-400 max-w-sm leading-relaxed">
         <p>
-          CampusFix is a secured institutional portal. Student & faculty accounts are provisioned by Campus IT. Public registration is not permitted.
+          CampusFix is a secured institutional portal. Student and Department Authority accounts are provisioned by Campus IT. Public registration is not permitted.
         </p>
       </div>
 

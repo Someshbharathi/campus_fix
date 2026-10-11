@@ -44,7 +44,7 @@ export default function AuthorityLayout({
         <Topbar
           onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
           onOpenNotifications={() => setNotificationsOpen(true)}
-          title="CampusFix Field Authority Console"
+          title="CampusFix Department Authority Console"
           subtitle="Work order execution, on-site task tracking, and resolution proof"
         />
 
@@ -53,7 +53,7 @@ export default function AuthorityLayout({
             <Suspense
               fallback={
                 <div className="p-8 text-center text-xs text-slate-500">
-                  Loading Authority console...
+                  Loading Department Authority console...
                 </div>
               }
             >

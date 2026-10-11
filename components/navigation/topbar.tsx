@@ -133,7 +133,7 @@ export function Topbar({
                 {currentUser?.role === "admin"
                   ? "Staff Admin"
                   : isAuthorityRole(currentUser?.role)
-                  ? "Field Authority"
+                  ? "Department Authority"
                   : "Student"}
               </span>
             </div>
@@ -167,7 +167,7 @@ export function Topbar({
                     ) : (
                       <GraduationCap className="h-3 w-3 text-emerald-500" />
                     )}
-                    <span className="capitalize">{currentUser?.role === "faculty" ? "faculty" : currentUser?.role} Account</span>
+                    <span className="capitalize">{isAuthorityRole(currentUser?.role) ? "Department Authority" : currentUser?.role} Account</span>
                   </div>
                 </div>
 

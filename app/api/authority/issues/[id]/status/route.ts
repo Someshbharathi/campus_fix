@@ -101,7 +101,11 @@ export async function PATCH(
       );
     }
 
-    if (!profile || profile.role !== "faculty" || !profile.department) {
+    if (
+      !profile ||
+      !["faculty", "department_authority"].includes(profile.role) ||
+      !profile.department
+    ) {
       console.warn("Authority status profile mismatch.", {
         userId: user.id,
         role: profile?.role ?? null,

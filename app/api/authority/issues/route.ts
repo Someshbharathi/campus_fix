@@ -57,7 +57,10 @@ export async function GET(request: NextRequest) {
       return jsonError("Unable to verify user permissions.", 500);
     }
 
-    if (!profile || profile.role !== "faculty") {
+    if (
+      !profile ||
+      !["faculty", "department_authority"].includes(profile.role)
+    ) {
       return jsonError(
         "Only authorized department authorities can access these complaints.",
         403
@@ -71,13 +74,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Return approved complaints assigned to this user's department only.
+    // Return routed complaints assigned to this user's department only.
+    // Pending complaints remain pending; visibility does not approve them.
     const { data: issues, error: issuesError } = await supabase
       .from("issues")
       .select(
         "id, title, description, category, location, priority, status, reporter_id, assigned_department, image_path, verification_status, verification_note, verified_at, created_at, updated_at"
       )
-      .eq("verification_status", "approved")
+      .in("verification_status", ["pending", "approved"])
       .eq("assigned_department", profile.department)
       .in("status", ["assigned", "in_progress", "resolved"])
       .order("created_at", { ascending: false });

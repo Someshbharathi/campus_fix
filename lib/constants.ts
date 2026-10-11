@@ -21,43 +21,43 @@ export const CATEGORIES: {
     {
       id: "cleanliness",
       label: "Cleanliness & Sanitation",
-      department: "Sanitation & Housekeeping",
+      department: "Cleanliness & Sanitation",
       description: "Trash accumulation, uncleaned restrooms, corridor dust, pest control",
     },
     {
       id: "classroom",
       label: "Classroom & Lab Facilities",
-      department: "Academic Infrastructure",
+      department: "Infrastructure & Civil Maintenance",
       description: "Projectors, audio systems, broken desks, whiteboard issues, lab equipment",
     },
     {
       id: "hostel",
       label: "Hostel Issues",
-      department: "Hostel Administration & Wardens",
+      department: "General Maintenance",
       description: "Room maintenance, hot water supply, mess facility, furniture damage",
     },
     {
       id: "network",
       label: "Internet & Network",
-      department: "IT & Network Infrastructure",
+      department: "IT & Network Support",
       description: "Wi-Fi connectivity, LAN port malfunction, firewall/portal login problems",
     },
     {
       id: "safety",
       label: "Safety & Security",
-      department: "Campus Security & Safety",
+      department: "General Maintenance",
       description: "Broken locks, dim streetlights, fire extinguisher inspection, surveillance",
     },
     {
       id: "maintenance",
       label: "Maintenance & Repairs",
-      department: "Civil & Estate Works",
+      department: "Infrastructure & Civil Maintenance",
       description: "Cracked walls, window glass replacement, door repair, lift maintenance",
     },
     {
       id: "other",
       label: "Other Campus Concerns",
-      department: "General Administration",
+      department: "General Maintenance",
       description: "Any issue not covered in above categories",
     },
   ];
@@ -65,13 +65,11 @@ export const CATEGORIES: {
 export const DEPARTMENTS = [
   "Electrical Maintenance",
   "Plumbing & Water Works",
-  "Sanitation & Housekeeping",
-  "Academic Infrastructure",
-  "Hostel Administration & Wardens",
-  "IT & Network Infrastructure",
-  "Campus Security & Safety",
-  "Civil & Estate Works",
-  "General Administration",
+  "Cleanliness & Sanitation",
+  "Infrastructure & Civil Maintenance",
+  "IT & Network Support",
+  "Equipment & Laboratory Maintenance",
+  "General Maintenance",
 ];
 
 export const CAMPUS_LOCATIONS = [

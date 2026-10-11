@@ -121,7 +121,7 @@ export default function AuthorityDashboardPage() {
       await updateStatus(
         c.id,
         "in_progress",
-        `Work started on-site by ${currentUser?.name || "Field Authority"} (${userDepartment}). Tools and materials mobilized.`
+        `Work started on-site by ${currentUser?.name || "Department Authority"} (${userDepartment}). Tools and materials mobilized.`
       );
     } finally {
       setIsProcessing(false);
@@ -205,7 +205,7 @@ export default function AuthorityDashboardPage() {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                  Authority Task Execution Unit
+                  Department Authority Task Execution Unit
                 </span>
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -290,7 +290,7 @@ export default function AuthorityDashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <span>Authority Work Orders</span>
+              <span>Department Authority Work Orders</span>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
                 {authorityOrders.length}
               </span>
@@ -483,11 +483,11 @@ export default function AuthorityDashboardPage() {
                       </div>
                     )}
 
-                    {/* Authority Resolution Notes (if resolved) */}
+                    {/* Department Authority Resolution Notes (if resolved) */}
                     {order.resolutionNotes && (
                       <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-xs">
                         <span className="font-bold text-emerald-900 dark:text-emerald-300 block mb-0.5">
-                          Resolution Certification by Authority:
+                          Resolution Certification by Department Authority:
                         </span>
                         <p className="text-emerald-800 dark:text-emerald-200">
                           {order.resolutionNotes}
@@ -536,7 +536,7 @@ export default function AuthorityDashboardPage() {
                   </div>
                 </div>
 
-                {/* Bottom Row: Authority Task Execution Controls */}
+                {/* Bottom Row: Department Authority Task Execution Controls */}
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                   <Link
                     href={`/authority/complaints/${order.id}`}

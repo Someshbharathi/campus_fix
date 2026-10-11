@@ -102,7 +102,7 @@ export default function HelpPage() {
 
             <div className="p-4 rounded-xl border border-sky-200/80 dark:border-sky-900/40 bg-sky-50/30 dark:bg-sky-950/20 text-xs space-y-1.5">
               <span className="font-bold text-sky-900 dark:text-sky-300 block text-sm">
-                3. Authority Mode
+                3. Department Authority Mode
               </span>
               <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
                 Carries out technical repairs and on-site tasks. Logs real-time progress entries and uploads resolution proof images upon work completion.

@@ -13,6 +13,11 @@ import {
   User,
   VerificationStatus,
 } from "./types";
+import {
+  getCanonicalDepartment,
+  getDatabaseCategory,
+  getDepartmentForCategory,
+} from "./department-routing";
 
 interface CampusFixContextType {
   currentUser: User | null;
@@ -67,7 +72,7 @@ const STORAGE_KEYS = {
 };
 
 export const isAuthorityRole = (role?: string | null): boolean => {
-  return role === "authority" || role === "faculty";
+  return role === "department_authority" || role === "faculty" || role === "authority";
 };
 
 export const getRoleHomePath = (role?: string | null): string => {
@@ -78,7 +83,9 @@ export const getRoleHomePath = (role?: string | null): string => {
 
 const normalizeRole = (role?: string | null): Role => {
   if (!role) return "student";
-  if (role === "faculty" || role === "authority") return "faculty";
+  if (role === "department_authority" || role === "faculty" || role === "authority") {
+    return "department_authority";
+  }
   if (role === "admin") return "admin";
   return "student";
 };
@@ -163,26 +170,8 @@ const apiError = async (response: Response) => {
   return payload?.error || `Request failed with status ${response.status}.`;
 };
 
-const backendCategory = (category: ComplaintCategory): string => {
-  if (category === "classroom" || category === "maintenance") return "infrastructure";
-  if (category === "network") return "internet";
-  if (category === "hostel" || category === "safety") return "other";
-  return category;
-};
-
 const backendDepartment = (department: string): string => {
-  const mappings: Record<string, string> = {
-    "Electrical Maintenance": "Electrical",
-    "Plumbing & Water Works": "Plumbing",
-    "Sanitation & Housekeeping": "Cleanliness",
-    "Academic Infrastructure": "Infrastructure",
-    "Hostel Administration & Wardens": "General Maintenance",
-    "IT & Network Infrastructure": "IT Support",
-    "Campus Security & Safety": "General Maintenance",
-    "Civil & Estate Works": "Infrastructure",
-    "General Administration": "General Maintenance",
-  };
-  return mappings[department] || department;
+  return getCanonicalDepartment(department) || getDepartmentForCategory(department) || department;
 };
 
 const buildProfileFromUser = async (user: { id: string; email?: string | null; user_metadata?: Record<string, unknown> }) => {
@@ -375,9 +364,11 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       const expectedRole = normalizeRole(role);
       if (profile.role !== expectedRole) {
         await supabase.auth.signOut();
+        const expectedRoleLabel =
+          expectedRole === "department_authority" ? "Department Authority" : expectedRole;
         return {
           success: false,
-          error: `This account is not registered as a ${expectedRole}.`,
+          error: `This account is not registered as a ${expectedRoleLabel}.`,
         };
       }
 
@@ -439,7 +430,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({
         title: data.title,
         description: data.description,
-        category: backendCategory(data.category),
+        category: getDatabaseCategory(data.category),
         location: `${data.campusLocation} - ${data.specificLocation}`,
       }),
     });

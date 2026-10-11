@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getDepartmentForCategory } from "@/lib/department-routing";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -227,6 +228,14 @@ export async function POST(request: NextRequest) {
       return jsonError("Invalid issue category.", 400);
     }
 
+    const assignedDepartment = getDepartmentForCategory(category);
+    if (!assignedDepartment) {
+      return jsonError(
+        "This complaint needs administrative routing before it can be assigned.",
+        422
+      );
+    }
+
     // 4. Look up the user's profile.
     const { data: profile, error: profileLookupError } =
       await supabase
@@ -284,6 +293,7 @@ export async function POST(request: NextRequest) {
           location,
           category,
           reporter_id: user.id,
+          assigned_department: assignedDepartment,
           status: "reported",
           priority: "medium",
           verification_status: "pending",

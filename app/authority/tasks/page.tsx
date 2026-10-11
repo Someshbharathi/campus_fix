@@ -138,7 +138,7 @@ export default function AuthorityTasksPage() {
             Active Field Work Orders
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Active Authority Tasks
+            Active Department Authority Tasks
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Pending kick-off and ongoing maintenance tasks across campus facilities.

@@ -33,7 +33,7 @@ export default function AuthorityComplaintDetailPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center dark:border-slate-800 dark:bg-slate-900">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-sky-600 mb-3" />
           <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-            Loading authority work order...
+            Loading Department Authority work order...
           </p>
         </div>
       }
@@ -81,7 +81,7 @@ function AuthorityComplaintDetailContent() {
           href="/authority"
           className="mt-5 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold"
         >
-          Return to Authority Dashboard
+          Return to Department Authority Dashboard
         </Link>
       </div>
     );
@@ -274,13 +274,13 @@ function AuthorityComplaintDetailContent() {
             )}
           </div>
 
-          {/* Interactive Authority Execution Controls */}
+          {/* Interactive Department Authority Execution Controls */}
           <div className="rounded-2xl border border-sky-200/80 bg-white p-6 dark:border-sky-950 dark:bg-slate-900 shadow-xs space-y-6">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Wrench className="h-5 w-5 text-sky-600" />
                 <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                  Authority Task Execution Console
+                  Department Authority Task Execution Console
                 </h2>
               </div>
               <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-800 capitalize">
@@ -353,7 +353,7 @@ function AuthorityComplaintDetailContent() {
               {isResolved ? (
                 <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs space-y-2">
                   <p className="font-bold text-emerald-900 dark:text-emerald-200">
-                    Officially Resolved by Authority on {formatDate(complaint.resolvedAt)}
+                    Officially Resolved by Department Authority on {formatDate(complaint.resolvedAt)}
                   </p>
                   <p className="text-emerald-800 dark:text-emerald-300">
                     {complaint.resolutionNotes}

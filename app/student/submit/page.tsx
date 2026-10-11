@@ -4,20 +4,20 @@ import React, { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  PlusCircle,
-  Upload,
+  AlertCircle,
   AlertTriangle,
+  ArrowLeft,
+  Building2,
+  Check,
   CheckCircle2,
-  X,
   FileText,
   Image as ImageIcon,
-  Building,
-  MapPin,
-  Tag,
-  Loader2,
-  ArrowLeft,
   Info,
-  Check,
+  Loader2,
+  MapPin,
+  Paperclip,
+  Trash2,
+  UploadCloud,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
 import { CAMPUS_LOCATIONS, CATEGORIES } from "@/lib/constants";
@@ -25,68 +25,78 @@ import { ComplaintCategory, Priority } from "@/lib/types";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
 
+const inputClass =
+  "h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
+
 export default function SubmitComplaintPage() {
   const router = useRouter();
   const { submitComplaint } = useCampusFix();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form State
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<ComplaintCategory>("electrical");
   const [campusLocation, setCampusLocation] = useState(CAMPUS_LOCATIONS[0]);
   const [specificLocation, setSpecificLocation] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<Priority>("medium");
-
-  // Evidence state
   const [fileAttachment, setFileAttachment] = useState<{
     name: string;
     size: string;
     previewUrl?: string;
   } | null>(null);
-
-  // UI state
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [createdComplaintId, setCreatedComplaintId] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const maxDescriptionChars = 1000;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const clearError = (field: string) => {
+    if (errors[field]) {
+      setErrors((previous) => ({ ...previous, [field]: "" }));
+    }
+  };
 
-    // Validate size (max 5MB)
+  const selectFile = (file?: File) => {
+    if (!file) return;
     if (file.size > 5 * 1024 * 1024) {
-      setErrors((prev) => ({
-        ...prev,
-        file: "Attachment size must not exceed 5 MB.",
+      setErrors((previous) => ({
+        ...previous,
+        file: "This file is larger than 5 MB. Choose a smaller file.",
       }));
       return;
     }
 
-    const previewUrl = file.type.startsWith("image/")
-      ? URL.createObjectURL(file)
-      : undefined;
+    if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
+      setErrors((previous) => ({
+        ...previous,
+        file: "Use a PNG, JPG, or PDF file.",
+      }));
+      return;
+    }
 
+    if (fileAttachment?.previewUrl) URL.revokeObjectURL(fileAttachment.previewUrl);
     setFileAttachment({
       name: file.name,
       size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-      previewUrl,
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
     });
+    setErrors((previous) => ({ ...previous, file: "" }));
+  };
 
-    setErrors((prev) => {
-      const copy = { ...prev };
-      delete copy.file;
-      return copy;
-    });
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    selectFile(event.target.files?.[0]);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    selectFile(event.dataTransfer.files?.[0]);
   };
 
   const removeAttachment = () => {
-    if (fileAttachment?.previewUrl) {
-      URL.revokeObjectURL(fileAttachment.previewUrl);
-    }
+    if (fileAttachment?.previewUrl) URL.revokeObjectURL(fileAttachment.previewUrl);
     setFileAttachment(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -102,49 +112,26 @@ export default function SubmitComplaintPage() {
     setErrors({});
   };
 
-  const validate = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!title.trim()) {
-      newErrors.title = "Complaint title is required.";
-    } else if (title.trim().length < 8) {
-      newErrors.title = "Title should be at least 8 characters long for clarity.";
-    }
-
-    if (!specificLocation.trim()) {
-      newErrors.specificLocation = "Please specify room, floor, or lab number.";
-    }
-
-    if (!description.trim()) {
-      newErrors.description = "Detailed description is required.";
-    } else if (description.trim().length < 20) {
-      newErrors.description =
-        "Please provide sufficient details (at least 20 characters) to help technicians locate and solve the issue.";
-    } else if (description.length > maxDescriptionChars) {
-      newErrors.description = `Description exceeds ${maxDescriptionChars} characters.`;
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const validate = () => {
+    const nextErrors: Record<string, string> = {};
+    if (!title.trim()) nextErrors.title = "Add a short title for the issue.";
+    else if (title.trim().length < 8) nextErrors.title = "Use at least 8 characters so the issue is easy to identify.";
+    if (!specificLocation.trim()) nextErrors.specificLocation = "Add a room, floor, lab, or other exact spot.";
+    if (!description.trim()) nextErrors.description = "Describe what is wrong and when you noticed it.";
+    else if (description.trim().length < 20) nextErrors.description = "Add at least 20 characters of useful detail.";
+    else if (description.length > maxDescriptionChars) nextErrors.description = `Keep the description under ${maxDescriptionChars} characters.`;
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
-  const isFormDirty = Boolean(
-    title.trim() || specificLocation.trim() || description.trim() || fileAttachment
-  );
+  const isFormDirty = Boolean(title.trim() || specificLocation.trim() || description.trim() || fileAttachment);
 
-  const handleCancel = () => {
-    if (isFormDirty) {
-      setDiscardModalOpen(true);
-    } else {
-      router.push("/student");
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validate()) return;
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isSubmitting || !validate()) return;
 
     setIsSubmitting(true);
+    setErrors((previous) => ({ ...previous, submit: "" }));
     try {
       const created = await submitComplaint({
         title: title.trim(),
@@ -156,381 +143,115 @@ export default function SubmitComplaintPage() {
         evidenceUrl: fileAttachment?.previewUrl,
         priority,
       });
-
       resetForm();
       setCreatedComplaintId(created.id);
-    } catch {
-      setErrors((prev) => ({
-        ...prev,
-        submit: "Failed to record complaint. Please check connection and retry.",
+    } catch (error) {
+      setErrors((previous) => ({
+        ...previous,
+        submit: error instanceof Error ? error.message : "Unable to record this complaint. Please try again.",
       }));
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleCancel = () => {
+    if (isFormDirty) setDiscardModalOpen(true);
+    else router.push("/student");
+  };
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Breadcrumb & Title */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+    <div className="mx-auto w-full max-w-5xl space-y-6 pb-8">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3">
           <Link
             href="/student"
-            className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 transition-colors"
+            aria-label="Back to student dashboard"
+            className="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-indigo-200 hover:text-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div>
-            <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100">
-              Submit a Campus Complaint
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              All submissions are verified by Campus Estate Administration prior to dispatch.
-            </p>
+            <p className="mb-1 text-xs font-bold uppercase tracking-[0.16em] text-indigo-600 dark:text-indigo-400">New service request</p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl dark:text-white">Report a campus issue</h1>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">Give the facilities team enough detail to verify, assign, and resolve the issue quickly.</p>
           </div>
         </div>
-      </div>
-
-      {/* Main Submission Form Card */}
-      <form
-        onSubmit={handleSubmit}
-        className="rounded-2xl border border-slate-200/80 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900 p-6 sm:p-8 space-y-6"
-      >
-        {errors.submit && (
-          <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            {errors.submit}
-          </div>
-        )}
-
-        {/* 1. Complaint Title */}
-        <div>
-          <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 uppercase tracking-wider">
-            1. Complaint Title <span className="text-rose-500">*</span>
-          </label>
-          <input
-            type="text"
-            required
-            value={title}
-            onChange={(e) => {
-              setTitle(e.target.value);
-              if (errors.title) setErrors((prev) => ({ ...prev, title: "" }));
-            }}
-            placeholder="Brief summary (e.g. Overhead ceiling projector sparking in Room 204)"
-            className={cn(
-              "w-full h-11 px-3.5 rounded-xl border text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 transition-all",
-              errors.title
-                ? "border-rose-400 focus:ring-rose-500"
-                : "border-slate-200 dark:border-slate-800"
-            )}
-          />
-          {errors.title && (
-            <p className="mt-1 text-xs text-rose-600 font-medium">{errors.title}</p>
-          )}
+        <div className="hidden items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 sm:flex dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" /> Secure submission
         </div>
+      </header>
 
-        {/* 2. Category & Priority Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 uppercase tracking-wider">
-              2. Category <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as ComplaintCategory)}
-                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-              >
-                {CATEGORIES.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.label}
-                  </option>
-                ))}
-              </select>
+      {errors.submit && (
+        <div role="alert" className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{errors.submit}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <section className="border-b border-slate-200 p-5 sm:p-7 dark:border-slate-800">
+          <div className="mb-6 flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400"><FileText className="h-4 w-4" /></div>
+            <div><h2 className="text-base font-bold text-slate-900 dark:text-white">Issue details</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Describe the problem in plain language.</p></div>
+          </div>
+          <div className="space-y-5">
+            <div>
+              <label htmlFor="title" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Issue title <span className="text-rose-500">*</span></label>
+              <input id="title" value={title} onChange={(event) => { setTitle(event.target.value); clearError("title"); }} placeholder="e.g. Water dispenser leaking near the library entrance" className={cn(inputClass, errors.title && "border-rose-400 focus:border-rose-500 focus:ring-rose-500/10")} aria-invalid={Boolean(errors.title)} aria-describedby={errors.title ? "title-error" : undefined} />
+              {errors.title && <p id="title-error" className="mt-2 flex items-center gap-1.5 text-xs font-medium text-rose-600"><AlertCircle className="h-3.5 w-3.5" />{errors.title}</p>}
             </div>
-            <p className="mt-1 text-[11px] text-slate-400">
-              Department:{" "}
-              <span className="font-semibold text-slate-600 dark:text-slate-300">
-                {CATEGORIES.find((c) => c.id === category)?.department}
-              </span>
-            </p>
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <label htmlFor="category" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Category <span className="text-rose-500">*</span></label>
+                <select id="category" value={category} onChange={(event) => setCategory(event.target.value as ComplaintCategory)} className={inputClass}>
+                  {CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Usually routed to <span className="font-semibold text-slate-700 dark:text-slate-300">{CATEGORIES.find((item) => item.id === category)?.department}</span></p>
+              </div>
+              <div>
+                <label htmlFor="priority" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Priority suggestion</label>
+                <select id="priority" value={priority} onChange={(event) => setPriority(event.target.value as Priority)} className={inputClass}>
+                  <option value="low">Low - Routine maintenance</option><option value="medium">Medium - Standard issue</option><option value="high">High - Disrupts classes or stay</option><option value="critical">Critical - Immediate safety, water, or power concern</option>
+                </select>
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Administration confirms priority during verification.</p>
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3"><label htmlFor="description" className="block text-sm font-semibold text-slate-800 dark:text-slate-200">What happened? <span className="text-rose-500">*</span></label><span className={cn("text-xs font-medium tabular-nums", description.length > maxDescriptionChars ? "text-rose-600" : "text-slate-400")}>{description.length}/{maxDescriptionChars}</span></div>
+              <textarea id="description" rows={6} maxLength={maxDescriptionChars} value={description} onChange={(event) => { setDescription(event.target.value); clearError("description"); }} placeholder="Include what you observed, when it started, who or what is affected, and any immediate safety concern." className={cn(inputClass, "h-auto min-h-36 resize-y py-3.5 leading-6", errors.description && "border-rose-400 focus:border-rose-500 focus:ring-rose-500/10")} aria-invalid={Boolean(errors.description)} aria-describedby={errors.description ? "description-error" : undefined} />
+              {errors.description && <p id="description-error" className="mt-2 flex items-center gap-1.5 text-xs font-medium text-rose-600"><AlertCircle className="h-3.5 w-3.5" />{errors.description}</p>}
+            </div>
           </div>
+        </section>
 
-          <div>
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 uppercase tracking-wider">
-              Priority Suggestion
-            </label>
-            <select
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as Priority)}
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-            >
-              <option value="low">Low — Routine maintenance / cosmetic</option>
-              <option value="medium">Medium — Standard issue affecting comfort</option>
-              <option value="high">High — Significant hindrance to classes or stay</option>
-              <option value="critical">Critical — Immediate safety / water / power emergency</option>
-            </select>
+        <section className="border-b border-slate-200 p-5 sm:p-7 dark:border-slate-800">
+          <div className="mb-6 flex items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-600 dark:bg-sky-950/50 dark:text-sky-400"><MapPin className="h-4 w-4" /></div><div><h2 className="text-base font-bold text-slate-900 dark:text-white">Location</h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Help the right team find the issue without a follow-up.</p></div></div>
+          <div className="grid gap-5 md:grid-cols-2">
+            <div><label htmlFor="campusLocation" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Building or campus area <span className="text-rose-500">*</span></label><div className="relative"><Building2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><select id="campusLocation" value={campusLocation} onChange={(event) => setCampusLocation(event.target.value)} className={cn(inputClass, "pl-10")} >{CAMPUS_LOCATIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div></div>
+            <div><label htmlFor="specificLocation" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Exact location <span className="text-rose-500">*</span></label><input id="specificLocation" value={specificLocation} onChange={(event) => { setSpecificLocation(event.target.value); clearError("specificLocation"); }} placeholder="Room 204, second floor, west wing" className={cn(inputClass, errors.specificLocation && "border-rose-400 focus:border-rose-500 focus:ring-rose-500/10")} aria-invalid={Boolean(errors.specificLocation)} aria-describedby={errors.specificLocation ? "location-error" : undefined} />{errors.specificLocation && <p id="location-error" className="mt-2 flex items-center gap-1.5 text-xs font-medium text-rose-600"><AlertCircle className="h-3.5 w-3.5" />{errors.specificLocation}</p>}</div>
           </div>
-        </div>
+        </section>
 
-        {/* 3. Location Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 uppercase tracking-wider">
-              3. Campus Location / Building <span className="text-rose-500">*</span>
-            </label>
-            <select
-              value={campusLocation}
-              onChange={(e) => setCampusLocation(e.target.value)}
-              className="w-full h-11 px-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-            >
-              {CAMPUS_LOCATIONS.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 uppercase tracking-wider">
-              4. Specific Spot / Room / Block <span className="text-rose-500">*</span>
-            </label>
-            <input
-              type="text"
-              required
-              value={specificLocation}
-              onChange={(e) => {
-                setSpecificLocation(e.target.value);
-                if (errors.specificLocation)
-                  setErrors((prev) => ({ ...prev, specificLocation: "" }));
-              }}
-              placeholder="e.g. 2nd Floor, Room 204 or West Wing Washroom"
-              className={cn(
-                "w-full h-11 px-3.5 rounded-xl border text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 transition-all",
-                errors.specificLocation
-                  ? "border-rose-400 focus:ring-rose-500"
-                  : "border-slate-200 dark:border-slate-800"
-              )}
-            />
-            {errors.specificLocation && (
-              <p className="mt-1 text-xs text-rose-600 font-medium">
-                {errors.specificLocation}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* 4. Detailed Description */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-              5. Detailed Description <span className="text-rose-500">*</span>
-            </label>
-            <span
-              className={cn(
-                "text-xs font-mono",
-                description.length > maxDescriptionChars
-                  ? "text-rose-600 font-bold"
-                  : "text-slate-400"
-              )}
-            >
-              {description.length}/{maxDescriptionChars}
-            </span>
-          </div>
-          <textarea
-            required
-            rows={4}
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-              if (errors.description) setErrors((prev) => ({ ...prev, description: "" }));
-            }}
-            placeholder="Explain exactly what happened, when it began, and any safety hazards or urgency..."
-            className={cn(
-              "w-full p-3.5 rounded-xl border text-sm bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 transition-all leading-relaxed",
-              errors.description
-                ? "border-rose-400 focus:ring-rose-500"
-                : "border-slate-200 dark:border-slate-800"
-            )}
-          />
-          {errors.description && (
-            <p className="mt-1 text-xs text-rose-600 font-medium">{errors.description}</p>
-          )}
-        </div>
-
-        {/* 5. Photo / Evidence Attachment */}
-        <div>
-          <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 uppercase tracking-wider">
-            6. Evidence or Photo Attachment (Optional)
+        <section className="p-5 sm:p-7">
+          <div className="mb-6 flex items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600 dark:bg-violet-950/50 dark:text-violet-400"><Paperclip className="h-4 w-4" /></div><div><h2 className="text-base font-bold text-slate-900 dark:text-white">Supporting evidence <span className="font-normal text-slate-400">(optional)</span></h2><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">A photo can help administration verify the issue faster.</p></div></div>
+          <label htmlFor="evidence" onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={handleDrop} className={cn("block cursor-pointer rounded-2xl border border-dashed p-6 text-center transition", isDragging ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30" : "border-slate-300 bg-slate-50/70 hover:border-indigo-400 hover:bg-indigo-50/40 dark:border-slate-700 dark:bg-slate-950/40 dark:hover:bg-indigo-950/20") }>
+            <input ref={fileInputRef} id="evidence" type="file" accept="image/*,application/pdf" onChange={handleFileChange} className="sr-only" />
+            {fileAttachment ? <div className="mx-auto flex max-w-md items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-3 text-left dark:border-slate-700 dark:bg-slate-900"><div className="flex min-w-0 items-center gap-3"><div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400">{fileAttachment.previewUrl ? <img src={fileAttachment.previewUrl} alt="Selected evidence preview" className="h-full w-full object-cover" /> : <FileText className="h-5 w-5" />}</div><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{fileAttachment.name}</p><p className="mt-0.5 text-xs text-emerald-600">Selected locally - {fileAttachment.size}</p></div></div><button type="button" onClick={(event) => { event.preventDefault(); removeAttachment(); }} aria-label="Remove selected evidence" className="rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"><Trash2 className="h-4 w-4" /></button></div> : <><UploadCloud className="mx-auto h-8 w-8 text-indigo-500" /><p className="mt-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Drop a file here or browse</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">PNG, JPG, or PDF up to 5 MB</p></>}
           </label>
-          <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-5 bg-slate-50/50 dark:bg-slate-950/30">
-            {fileAttachment ? (
-              <div className="flex items-center justify-between p-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                    <ImageIcon className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
-                      {fileAttachment.name}
-                    </p>
-                    <p className="text-[11px] text-slate-400">{fileAttachment.size}</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={removeAttachment}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="text-center">
-                <Upload className="mx-auto h-8 w-8 text-slate-400 mb-2" />
-                <label className="inline-block cursor-pointer px-4 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 transition-colors">
-                  Choose Photo / File
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,application/pdf"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                </label>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  PNG, JPG, or PDF up to 5MB. Photos help administrators verify issues faster.
-                </p>
-              </div>
-            )}
-            {errors.file && (
-              <p className="mt-2 text-xs text-rose-600 font-medium">{errors.file}</p>
-            )}
-          </div>
-        </div>
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Info className="h-3.5 w-3.5" /> Evidence is previewed locally. It is not saved to Supabase Storage until upload support is configured.</p>
+          {errors.file && <p role="alert" className="mt-2 text-xs font-medium text-rose-600">{errors.file}</p>}
+        </section>
 
-        {/* Transparency Notice Box */}
-        <div className="rounded-xl p-4 bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 flex items-start gap-3 text-xs text-indigo-900 dark:text-indigo-300">
-          <Info className="h-4 w-4 shrink-0 mt-0.5 text-indigo-600 dark:text-indigo-400" />
-          <p className="leading-relaxed">
-            <strong>CampusFix Verification Policy:</strong> Submitted tickets are initially marked as{" "}
-            <em>&quot;Awaiting Verification&quot;</em>. The Campus Estate team verifies complaints to prevent duplicates and dispatch authorized technicians. You will receive live notifications upon verification.
-          </p>
-        </div>
-
-        {/* Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-          <button
-            type="button"
-            onClick={handleCancel}
-            disabled={isSubmitting}
-            className="px-5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-semibold text-white shadow-md shadow-indigo-600/20 transition-all flex items-center gap-2 disabled:opacity-70"
-          >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Recording Complaint...</span>
-              </>
-            ) : (
-              <>
-                <Check className="h-4 w-4" />
-                <span>Submit Complaint</span>
-              </>
-            )}
-          </button>
-        </div>
+        <footer className="flex flex-col gap-4 border-t border-slate-200 bg-slate-50/70 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-7 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="flex items-start gap-2.5 text-xs leading-5 text-slate-500 dark:text-slate-400"><Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" /><span>Every complaint starts as <strong className="font-semibold text-slate-700 dark:text-slate-300">Awaiting Verification</strong>. The administration reviews it before dispatch.</span></div>
+          <div className="flex shrink-0 gap-2"><button type="button" onClick={handleCancel} disabled={isSubmitting} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">Cancel</button><button type="submit" disabled={isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60">{isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin" />Submitting...</> : <><Check className="h-4 w-4" />Submit complaint</>}</button></div>
+        </footer>
       </form>
 
-      {/* Discard Confirmation Modal */}
-      <Modal
-        isOpen={discardModalOpen}
-        onClose={() => setDiscardModalOpen(false)}
-        title="Discard Draft Complaint?"
-        maxWidth="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            You have unsaved changes in this complaint form. Are you sure you want to discard your draft? This cannot be undone.
-          </p>
-          <div className="flex items-center justify-end gap-2.5 pt-2">
-            <button
-              type="button"
-              onClick={() => setDiscardModalOpen(false)}
-              className="px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100"
-            >
-              Continue Editing
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDiscardModalOpen(false);
-                router.push("/student");
-              }}
-              className="px-4 py-2 rounded-lg bg-rose-600 text-white text-xs font-medium hover:bg-rose-700 transition-colors"
-            >
-              Discard Changes
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <Modal isOpen={discardModalOpen} onClose={() => setDiscardModalOpen(false)} title="Discard this draft?" maxWidth="sm"><div className="space-y-4"><p className="text-sm leading-6 text-slate-600 dark:text-slate-400">Your changes have not been submitted. Discard this draft and return to the dashboard?</p><div className="flex justify-end gap-2"><button type="button" onClick={() => setDiscardModalOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">Continue editing</button><button type="button" onClick={() => { setDiscardModalOpen(false); resetForm(); router.push("/student"); }} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white">Discard draft</button></div></div></Modal>
 
-      {/* Success Receipt Modal */}
-      <Modal
-        isOpen={Boolean(createdComplaintId)}
-        onClose={() => router.push(`/student/complaints/${createdComplaintId}`)}
-        title="Complaint Submitted Successfully"
-        maxWidth="md"
-      >
-        <div className="space-y-4 text-center py-2">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400 mx-auto flex items-center justify-center border border-emerald-200 dark:border-emerald-800">
-            <CheckCircle2 className="h-8 w-8" />
-          </div>
-
-          <div>
-            <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">
-              Complaint Tracking ID
-            </p>
-            <p className="text-2xl font-mono font-bold text-indigo-600 dark:text-indigo-400 mt-1">
-              {createdComplaintId}
-            </p>
-          </div>
-
-          <p className="text-xs text-slate-600 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
-            Your complaint has been queued for administrative inspection. Current status:{" "}
-            <span className="font-semibold text-amber-600">Awaiting Verification</span>.
-          </p>
-
-          <div className="flex flex-col sm:flex-row items-center gap-2 pt-2">
-            <Link
-              href={`/student/complaints/${createdComplaintId}`}
-              className="w-full sm:flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
-            >
-              Track Complaint Timeline
-            </Link>
-            <Link
-              href="/student"
-              className="w-full sm:flex-1 py-2.5 px-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors"
-            >
-              Back to Dashboard
-            </Link>
-            <button
-              type="button"
-              onClick={() => setCreatedComplaintId(null)}
-              className="w-full sm:flex-1 py-2.5 px-4 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold transition-colors dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
-            >
-              Submit Another Complaint
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <Modal isOpen={Boolean(createdComplaintId)} onClose={() => router.push(`/student/complaints/${createdComplaintId}`)} title="Complaint submitted" maxWidth="md"><div className="space-y-5 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400"><CheckCircle2 className="h-7 w-7" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Tracking ID</p><p className="mt-2 break-all font-mono text-xl font-bold text-indigo-600 dark:text-indigo-400">{createdComplaintId}</p></div><p className="mx-auto max-w-sm text-sm leading-6 text-slate-500 dark:text-slate-400">Your complaint is waiting for administrative verification. Keep this ID for reference.</p><div className="grid gap-2 sm:grid-cols-3"><Link href={`/student/complaints/${createdComplaintId}`} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-semibold text-white hover:bg-indigo-700">Track complaint</Link><Link href="/student" className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Back to dashboard</Link><button type="button" onClick={() => setCreatedComplaintId(null)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Submit another</button></div></div></Modal>
     </div>
   );
 }

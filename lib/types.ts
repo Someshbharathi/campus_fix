@@ -1,4 +1,4 @@
-export type Role = "student" | "admin" | "authority" | "faculty";
+export type Role = "student" | "admin" | "department_authority" | "faculty" | "authority";
 
 export type VerificationStatus =
   | "awaiting_verification"
@@ -21,6 +21,9 @@ export type ComplaintCategory =
   | "electrical"
   | "plumbing"
   | "cleanliness"
+  | "infrastructure"
+  | "internet"
+  | "equipment"
   | "classroom"
   | "hostel"
   | "network"

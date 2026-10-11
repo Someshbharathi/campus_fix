@@ -70,7 +70,7 @@ export default function AdminVerificationQueuePage() {
     );
     setForwardPriority(c.priority || "medium");
     setForwardDirectives(
-      "Report verified on site. Forwarded to field authority for execution and resolution."
+      "Report verified on site. Forwarded to the Department Authority for execution and resolution."
     );
     setForwardModalOpen(true);
   };
@@ -345,7 +345,7 @@ export default function AdminVerificationQueuePage() {
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
                   >
                     <Send className="h-3.5 w-3.5" />
-                    <span>Forward to Authority</span>
+                    <span>Forward to Department Authority</span>
                   </button>
                 </div>
               </div>
@@ -354,11 +354,11 @@ export default function AdminVerificationQueuePage() {
         </div>
       )}
 
-      {/* Forward to Authority Modal */}
+      {/* Forward to Department Authority Modal */}
       <Modal
         isOpen={forwardModalOpen}
         onClose={() => setForwardModalOpen(false)}
-        title="Forward Complaint to Authority"
+        title="Forward Complaint to Department Authority"
         maxWidth="lg"
       >
         <form onSubmit={handleConfirmForward} className="space-y-4">
@@ -465,7 +465,7 @@ export default function AdminVerificationQueuePage() {
               ) : (
                 <>
                   <Send className="h-3.5 w-3.5" />
-                  <span>Forward Work Order to Authority</span>
+                  <span>Forward Work Order to Department Authority</span>
                 </>
               )}
             </button>
