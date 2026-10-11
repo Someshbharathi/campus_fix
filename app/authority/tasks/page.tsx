@@ -18,8 +18,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
-import { getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
-import { DEPARTMENTS } from "@/lib/constants";
+import { DEPARTMENT_OPTIONS, getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
 import { Complaint, Priority } from "@/lib/types";
 import { PriorityBadge, ResolutionBadge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
@@ -29,7 +28,10 @@ export default function AuthorityTasksPage() {
   const { complaints, currentUser, updateStatus, resolveComplaintByAuthority } =
     useCampusFix();
 
-  const userDepartment = currentUser?.department || "Electrical Maintenance";
+  const canonicalUserDepartment = currentUser?.department
+    ? getCanonicalDepartment(currentUser.department) || currentUser.department
+    : undefined;
+  const canViewAllDepartments = currentUser?.authorityScope === "all_departments";
 
   const [searchQuery, setSearchQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
@@ -47,12 +49,13 @@ export default function AuthorityTasksPage() {
   const activeTasks = useMemo(() => {
     return complaints.filter((c) => {
       if (!c.assignedDepartment || !["awaiting_verification", "verified"].includes(c.verificationStatus)) return false;
-      if (c.assignedDepartment !== userDepartment) return false;
+      const canonicalDepartment = getCanonicalDepartment(c.assignedDepartment) || c.assignedDepartment;
+      if (!canViewAllDepartments && canonicalDepartment !== canonicalUserDepartment) return false;
       if (c.resolutionStatus === "resolved" || c.resolutionStatus === "rejected") {
         return false;
       }
 
-      if (departmentFilter !== "all" && c.assignedDepartment !== getCanonicalDepartment(departmentFilter)) {
+      if (departmentFilter !== "all" && canonicalDepartment !== departmentFilter) {
         return false;
       }
 
@@ -65,6 +68,7 @@ export default function AuthorityTasksPage() {
         const matches =
           c.id.toLowerCase().includes(q) ||
           c.title.toLowerCase().includes(q) ||
+          c.description.toLowerCase().includes(q) ||
           c.campusLocation.toLowerCase().includes(q) ||
           c.specificLocation.toLowerCase().includes(q);
         if (!matches) return false;
@@ -72,7 +76,7 @@ export default function AuthorityTasksPage() {
 
       return true;
     });
-  }, [complaints, departmentFilter, priorityFilter, searchQuery]);
+  }, [complaints, departmentFilter, priorityFilter, searchQuery, canonicalUserDepartment, canViewAllDepartments]);
 
   const handleStart = async (c: Complaint) => {
     setIsProcessing(true);
@@ -140,7 +144,7 @@ export default function AuthorityTasksPage() {
             Active Field Work Orders
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Active Department Authority Tasks
+            Active Maintenance Tasks
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Pending kick-off and ongoing maintenance tasks across campus facilities.
@@ -168,18 +172,20 @@ export default function AuthorityTasksPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <select
+          {canViewAllDepartments ? <select
             value={departmentFilter}
             onChange={(e) => setDepartmentFilter(e.target.value)}
             className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
           >
             <option value="all">All Departments</option>
-            {DEPARTMENTS.map((dept) => (
-              <option key={dept} value={dept}>
-                {dept}
+            {DEPARTMENT_OPTIONS.map((department) => (
+              <option key={department.canonical} value={department.canonical}>
+                {department.label}
               </option>
             ))}
-          </select>
+          </select> : <span className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+            {getDepartmentDisplayName(currentUser?.department)}
+          </span>}
 
           <select
             value={priorityFilter}

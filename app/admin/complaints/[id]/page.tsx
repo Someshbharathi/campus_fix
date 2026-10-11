@@ -21,7 +21,8 @@ import {
   Check,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
-import { DEPARTMENTS, CATEGORIES } from "@/lib/constants";
+import { DEPARTMENTS } from "@/lib/constants";
+import { AI_CATEGORY_OPTIONS, AIComplaintCategory, getAIComplaintCategoryLabel } from "@/lib/ai/categories";
 import { Priority, ResolutionStatus } from "@/lib/types";
 import { VerticalTimeline } from "@/components/ui/timeline";
 import { VerificationBadge, ResolutionBadge, PriorityBadge } from "@/components/ui/badge";
@@ -51,9 +52,11 @@ function AdminComplaintManagementContent() {
 
   const {
     getComplaintById,
+    currentUser,
     assignDepartment,
     updatePriority,
     updateStatus,
+    updateAIComplaintCategory,
   } = useCampusFix();
 
   const complaint = getComplaintById(complaintId);
@@ -75,6 +78,9 @@ function AdminComplaintManagementContent() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [reviewCategory, setReviewCategory] = useState<AIComplaintCategory | null>(null);
+  const [categorySaving, setCategorySaving] = useState(false);
+  const [categoryMessage, setCategoryMessage] = useState("");
 
   if (!complaint) {
     return (
@@ -141,6 +147,22 @@ function AdminComplaintManagementContent() {
       });
     } catch {
       return isoString;
+    }
+  };
+
+  const selectedCategory = reviewCategory ?? complaint.aiCategory ?? "other";
+
+  const saveCategoryReview = async () => {
+    setCategorySaving(true);
+    setCategoryMessage("");
+    try {
+      await updateAIComplaintCategory(complaint.id, selectedCategory);
+      setReviewCategory(selectedCategory);
+      setCategoryMessage("AI category correction saved.");
+    } catch (error) {
+      setCategoryMessage(error instanceof Error ? error.message : "Could not save category correction.");
+    } finally {
+      setCategorySaving(false);
     }
   };
 
@@ -350,6 +372,32 @@ function AdminComplaintManagementContent() {
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">AI Classification & Assessment</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              {(["Safety", "Severity", "Urgency", "Frequency"] as const).map((label, index) => {
+                const values = [complaint.aiSafety, complaint.aiSeverity, complaint.aiUrgency, complaint.aiFrequency];
+                return <div key={label} className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3"><span className="block text-slate-500">{label}</span><strong>{values[index] ?? "—"}{values[index] != null ? "/5" : ""}</strong></div>;
+              })}
+              <div className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3"><span className="block text-slate-500">Affected population</span><strong>{complaint.aiAffectedPopulation ?? "—"}{complaint.aiAffectedPopulation != null ? "/5" : ""}</strong></div>
+              <div className="rounded-lg bg-slate-50 dark:bg-slate-950 p-3"><span className="block text-slate-500">Priority score</span><strong>{complaint.priorityScore ?? "—"}</strong></div>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex-1 min-w-56 text-xs font-semibold text-slate-600">Review category: <span className="font-normal">{getAIComplaintCategoryLabel(complaint.aiCategory)}</span>
+                <select value={selectedCategory} onChange={(e) => setReviewCategory(e.target.value as AIComplaintCategory)} disabled={currentUser?.role !== "admin"} className="mt-1 block w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-xs dark:border-slate-700 dark:bg-slate-950">
+                  {AI_CATEGORY_OPTIONS.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}
+                </select>
+              </label>
+              {currentUser?.role === "admin" && <button type="button" disabled={categorySaving || selectedCategory === complaint.aiCategory} onClick={saveCategoryReview} className="h-10 rounded-lg bg-indigo-600 px-4 text-xs font-semibold text-white disabled:opacity-50">{categorySaving ? "Saving…" : "Save correction"}</button>}
+              {categoryMessage && <p role="status" className="w-full text-xs text-slate-500">{categoryMessage}</p>}
+            </div>
+            {complaint.aiSpam && <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Flagged for review: {complaint.aiSpamReason || "Contextual spam assessment"}</p>}
+            <div>
+              <h4 className="text-xs font-bold text-slate-600 dark:text-slate-300">Potentially similar complaints ({complaint.similarComplaints?.length ?? 0})</h4>
+              {complaint.similarComplaints?.length ? <ul className="mt-2 space-y-2">{complaint.similarComplaints.map((match) => <li key={match.id} className="flex items-center justify-between rounded-lg border border-slate-100 p-3 text-xs dark:border-slate-800"><Link href={`/admin/complaints/${match.id}`} className="font-mono text-indigo-600 hover:underline">{match.id}</Link><span>{getAIComplaintCategoryLabel(match.category)} · {match.sameCategory ? "same category" : "cross category"}</span><strong>{Math.round(match.similarity * 100)}% similar</strong></li>)}</ul> : <p className="mt-1 text-xs text-slate-500">No similarity matches stored.</p>}
+            </div>
           </div>
         </div>
 

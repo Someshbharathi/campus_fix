@@ -1,4 +1,5 @@
 import { ComplaintCategory, Priority, ResolutionStatus, VerificationStatus } from "./types";
+import { DEPARTMENT_OPTIONS } from "./department-routing";
 
 export const CATEGORIES: {
   id: ComplaintCategory;
@@ -35,15 +36,7 @@ export const CATEGORIES: {
     },
   ];
 
-export const DEPARTMENTS = [
-  "Electrical Maintenance",
-  "Plumbing & Water Works",
-  "Cleanliness & Sanitation",
-  "Infrastructure & Civil Maintenance",
-  "IT & Network Support",
-  "Equipment & Laboratory Maintenance",
-  "General Maintenance",
-];
+export const DEPARTMENTS: string[] = DEPARTMENT_OPTIONS.map(({ label }) => label);
 
 export const CAMPUS_LOCATIONS = [
   "Academic Block A (Science & Tech)",

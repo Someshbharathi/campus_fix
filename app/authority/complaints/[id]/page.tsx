@@ -96,7 +96,7 @@ function AuthorityComplaintDetailContent() {
       await updateStatus(
         complaint.id,
         "in_progress",
-        `Work order commenced on-site by ${currentUser?.name || "Field Officer"} (${currentUser?.department || "Maintenance"}).`
+        `Work order commenced on-site by ${currentUser?.name || "Department authority"}.`
       );
       setActionSuccess("Task transitioned to In-Progress status.");
       setTimeout(() => setActionSuccess(null), 3000);

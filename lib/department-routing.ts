@@ -9,15 +9,21 @@ export type CanonicalDepartment =
   | "Equipment"
   | "General Maintenance";
 
-export const DEPARTMENT_DISPLAY_NAMES: Record<CanonicalDepartment, string> = {
-  Electrical: "Electrical Maintenance",
-  Plumbing: "Plumbing & Water Works",
-  Cleanliness: "Cleanliness & Sanitation",
-  Infrastructure: "Infrastructure & Civil Maintenance",
-  "IT Support": "IT & Network Support",
-  Equipment: "Equipment & Laboratory Maintenance",
-  "General Maintenance": "General Maintenance",
-};
+export const DEPARTMENT_OPTIONS = [
+  { canonical: "Electrical", label: "Electrical Maintenance" },
+  { canonical: "Plumbing", label: "Plumbing & Water Works" },
+  { canonical: "Cleanliness", label: "Cleanliness & Sanitation" },
+  { canonical: "Infrastructure", label: "Infrastructure & Civil Maintenance" },
+  { canonical: "IT Support", label: "IT & Network Support" },
+  { canonical: "Equipment", label: "Equipment & Laboratory Maintenance" },
+  { canonical: "General Maintenance", label: "General Maintenance" },
+] as const satisfies readonly { canonical: CanonicalDepartment; label: string }[];
+
+export type AuthorityScope = "all_departments" | "assigned_department";
+
+export const DEPARTMENT_DISPLAY_NAMES = Object.fromEntries(
+  DEPARTMENT_OPTIONS.map(({ canonical, label }) => [canonical, label])
+) as Record<CanonicalDepartment, string>;
 
 const CATEGORY_TO_DEPARTMENT: Partial<Record<ComplaintCategory, CanonicalDepartment>> = {
   electrical: "Electrical",

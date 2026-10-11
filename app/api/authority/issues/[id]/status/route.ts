@@ -85,7 +85,7 @@ export async function PATCH(
     stage = "profile lookup";
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("role, department")
+      .select("role, department, authority_scope")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -104,12 +104,13 @@ export async function PATCH(
     if (
       !profile ||
       profile.role !== "department_authority" ||
-      !profile.department
+      (profile.authority_scope !== "all_departments" && !profile.department)
     ) {
       console.warn("Authority status profile mismatch.", {
         userId: user.id,
         role: profile?.role ?? null,
         hasDepartment: Boolean(profile?.department),
+        authorityScope: profile?.authority_scope ?? null,
       });
       return NextResponse.json(
         { error: "Department authority access required." },
@@ -166,13 +167,15 @@ export async function PATCH(
     // Defense in depth around the RPC: only a non-rejected routed issue in this
     // authority's own department may enter the status transition function.
     stage = "issue authorization";
-    const { data: issue, error: issueLookupError } = await supabase
+    let issueQuery = supabase
       .from("issues")
       .select("id, status, verification_status, assigned_department")
       .eq("id", id)
-      .eq("assigned_department", profile.department)
-      .in("verification_status", ["pending", "approved"])
-      .maybeSingle();
+      .in("verification_status", ["pending", "approved"]);
+    if (profile.authority_scope !== "all_departments") {
+      issueQuery = issueQuery.eq("assigned_department", profile.department!);
+    }
+    const { data: issue, error: issueLookupError } = await issueQuery.maybeSingle();
 
     if (issueLookupError) {
       console.error("Authority issue authorization lookup failed.", {

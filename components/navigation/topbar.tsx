@@ -13,6 +13,7 @@ import {
   GraduationCap,
   LogOut,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 import { getRoleHomePath, isAuthorityRole, useCampusFix } from "@/lib/store";
 
@@ -30,7 +31,7 @@ export function Topbar({
   subtitle,
 }: TopbarProps) {
   const router = useRouter();
-  const { currentUser, unreadCount, logout } = useCampusFix();
+  const { currentUser, unreadCount, logout, syncState, syncError, refreshComplaints } = useCampusFix();
   const [profileOpen, setProfileOpen] = React.useState(false);
   const [logoutError, setLogoutError] = React.useState<string | null>(null);
 
@@ -73,6 +74,13 @@ export function Topbar({
 
       {/* Right: Actions, Notifications, User Chip */}
       <div className="flex items-center gap-2 sm:gap-3">
+        {currentUser && (
+          <div className="hidden md:flex items-center gap-1.5 text-[10px] text-slate-500" title={syncError || "Complaint data synchronization status"}>
+            <span className={`h-2 w-2 rounded-full ${syncState === "error" ? "bg-rose-500" : syncState === "syncing" || syncState === "loading" ? "bg-amber-400 animate-pulse" : syncState === "realtime" ? "bg-emerald-500" : "bg-sky-500"}`} />
+            <span>{syncState === "realtime" ? "Live" : syncState === "polling" ? "Synced" : syncState === "error" ? "Sync issue" : "Updating"}</span>
+            {syncState === "error" && <button type="button" onClick={() => void refreshComplaints()} className="ml-1 inline-flex items-center gap-1 font-semibold text-indigo-600 hover:underline" aria-label="Retry complaint synchronization"><RefreshCw className="h-3 w-3" />Retry</button>}
+          </div>
+        )}
         {/* Quick CTA */}
         {role === "student" ? (
           <Link

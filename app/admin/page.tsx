@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import {
   ShieldCheck,
@@ -22,13 +22,21 @@ import {
 import { useCampusFix } from "@/lib/store";
 import { StatCard } from "@/components/ui/stat-card";
 import { VerificationBadge, ResolutionBadge, PriorityBadge } from "@/components/ui/badge";
-import { CATEGORIES, DEPARTMENTS } from "@/lib/constants";
+import { DEPARTMENTS } from "@/lib/constants";
+import { AI_CATEGORY_OPTIONS, getAIComplaintCategoryLabel } from "@/lib/ai/categories";
 import { Priority, ResolutionStatus, VerificationStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
 
 export default function AdminDashboardPage() {
   const { complaints, currentUser } = useCampusFix();
+  const [currentTime, setCurrentTime] = useState(0);
+  useEffect(() => {
+    const refresh = () => setCurrentTime(Date.now());
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Metric counts
   const totalCount = complaints.length;
@@ -46,7 +54,7 @@ export default function AdminDashboardPage() {
   ).length;
   const overdueCount = complaints.filter((c) =>
     c.resolutionStatus !== "resolved" && c.resolutionStatus !== "rejected" &&
-    Date.now() - new Date(c.submittedAt).getTime() > 72 * 60 * 60 * 1000
+    currentTime - new Date(c.submittedAt).getTime() > 72 * 60 * 60 * 1000
   ).length;
   const criticalCount = complaints.filter((c) => c.priority === "critical").length;
 
@@ -56,9 +64,11 @@ export default function AdminDashboardPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [prioritySort, setPrioritySort] = useState("none");
 
   const filteredComplaints = useMemo(() => {
-    return complaints.filter((item) => {
+    const filtered = complaints.filter((item) => {
       // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -83,7 +93,7 @@ export default function AdminDashboardPage() {
       // Status
       if (statusFilter === "overdue") {
         if (item.resolutionStatus === "resolved" || item.resolutionStatus === "rejected" ||
-          Date.now() - new Date(item.submittedAt).getTime() <= 72 * 60 * 60 * 1000) return false;
+          currentTime - new Date(item.submittedAt).getTime() <= 72 * 60 * 60 * 1000) return false;
       } else if (statusFilter !== "all" && item.resolutionStatus !== statusFilter) {
         return false;
       }
@@ -98,8 +108,16 @@ export default function AdminDashboardPage() {
         return false;
       }
 
+      if (categoryFilter !== "all" && item.aiCategory !== categoryFilter) return false;
+
       return true;
     });
+    if (prioritySort !== "none") {
+      const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+      filtered.sort((a, b) => (priorityOrder[b.priority] - priorityOrder[a.priority]) * (prioritySort === "highest" ? 1 : -1)
+        || (b.priorityScore ?? 0) - (a.priorityScore ?? 0));
+    }
+    return filtered;
   }, [
     complaints,
     searchQuery,
@@ -107,6 +125,9 @@ export default function AdminDashboardPage() {
     statusFilter,
     departmentFilter,
     priorityFilter,
+    categoryFilter,
+    prioritySort,
+    currentTime,
   ]);
 
   const formatDate = (isoString: string) => {
@@ -258,7 +279,7 @@ export default function AdminDashboardPage() {
           </div>
 
           {/* Multilateral Filter Controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2.5 pt-1">
             {/* Search */}
             <div className="relative md:col-span-2">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
@@ -309,6 +330,17 @@ export default function AdminDashboardPage() {
               <option value="high">High</option>
               <option value="medium">Medium</option>
               <option value="low">Low</option>
+            </select>
+
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="h-9 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300">
+              <option value="all">All Categories</option>
+              {AI_CATEGORY_OPTIONS.map((category) => <option key={category.id} value={category.id}>{category.label} ({complaints.filter((item) => item.aiCategory === category.id).length})</option>)}
+            </select>
+
+            <select value={prioritySort} onChange={(e) => setPrioritySort(e.target.value)} className="h-9 px-2.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300">
+              <option value="none">Default Order</option>
+              <option value="highest">Highest Priority Score</option>
+              <option value="lowest">Lowest Priority Score</option>
             </select>
           </div>
         </div>
@@ -366,7 +398,7 @@ export default function AdminDashboardPage() {
                       </Link>
                       <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
                         <span className="capitalize font-medium text-slate-600 dark:text-slate-400">
-                          {CATEGORIES.find((c) => c.id === item.category)?.label || item.category}
+                          {getAIComplaintCategoryLabel(item.aiCategory)}
                         </span>
                         <span>•</span>
                         <span>Dept: {getDepartmentDisplayName(item.assignedDepartment)}</span>

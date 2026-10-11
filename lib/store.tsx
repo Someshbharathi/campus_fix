@@ -1,7 +1,9 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { AIComplaintCategory } from "@/lib/ai/categories";
+import { normalizeProfileRole } from "@/lib/auth/roles";
 import {
   Complaint,
   ComplaintCategory,
@@ -9,13 +11,11 @@ import {
   Priority,
   ResolutionStatus,
   Role,
-  TimelineEvent,
   User,
   VerificationStatus,
 } from "./types";
 import {
   getCanonicalDepartment,
-  getDatabaseCategory,
   getDepartmentForCategory,
 } from "./department-routing";
 
@@ -24,11 +24,13 @@ interface CampusFixContextType {
   complaints: Complaint[];
   notifications: NotificationItem[];
   isLoading: boolean;
+  syncState: "loading" | "syncing" | "realtime" | "polling" | "error";
+  syncError: string | null;
+  refreshComplaints: () => Promise<void>;
   login: (email: string, password: string, role: Role) => Promise<{ success: boolean; error?: string; user?: User }>;
   logout: () => Promise<{ success: boolean; error?: string }>;
   submitComplaint: (data: {
     title: string;
-    category: ComplaintCategory;
     description: string;
     campusLocation: string;
     specificLocation: string;
@@ -48,6 +50,7 @@ interface CampusFixContextType {
   provideAdditionalInfo: (id: string, message: string) => Promise<void>;
   assignDepartment: (id: string, department: string, person?: string) => Promise<void>;
   updatePriority: (id: string, priority: Priority) => Promise<void>;
+  updateAIComplaintCategory: (id: string, category: AIComplaintCategory) => Promise<void>;
   updateStatus: (id: string, status: ResolutionStatus, notes?: string) => Promise<void>;
   resolveComplaintByAuthority: (
     id: string,
@@ -67,27 +70,48 @@ const CampusFixContext = createContext<CampusFixContextType | undefined>(undefin
 
 const STORAGE_KEYS = {
   USER: "campusfix_user",
-  COMPLAINTS: "campusfix_complaints",
-  NOTIFICATIONS: "campusfix_notifications",
+  READ_NOTIFICATIONS: "campusfix_read_notifications",
 };
 
+function deriveNotifications(complaints: Complaint[], readIds: Set<string>): NotificationItem[] {
+  const items: NotificationItem[] = [];
+  for (const complaint of complaints) {
+    for (const event of complaint.timeline.slice(1)) {
+      const type: NotificationItem["type"] = event.type === "progress" || event.type === "resolved" ? "status" : "info";
+      items.push({
+        id: event.id,
+        title: event.title,
+        message: `Complaint ${complaint.id}: ${event.description}`,
+        timestamp: event.timestamp,
+        read: readIds.has(event.id),
+        complaintId: complaint.id,
+        type,
+      });
+    }
+    if (complaint.verificationStatus !== "awaiting_verification" && complaint.updatedAt > complaint.submittedAt) {
+      const id = `verification:${complaint.id}:${complaint.verificationStatus}:${complaint.verificationDate || complaint.submittedAt}`;
+      items.push({
+        id,
+        title: complaint.verificationStatus === "verified" ? "Complaint approved" : complaint.verificationStatus === "rejected" ? "Complaint rejected" : complaint.verificationStatus === "info_requested" ? "More information requested" : "Complaint review updated",
+        message: `Complaint ${complaint.id}${complaint.verificationReason ? `: ${complaint.verificationReason}` : " has a verification update."}`,
+        timestamp: complaint.verificationDate || complaint.updatedAt,
+        read: readIds.has(id),
+        complaintId: complaint.id,
+        type: "verification",
+      });
+    }
+  }
+  return items.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+}
+
 export const isAuthorityRole = (role?: string | null): boolean => {
-  return role === "department_authority";
+  return normalizeProfileRole(role) === "department_authority";
 };
 
 export const getRoleHomePath = (role?: string | null): string => {
   if (role === "admin") return "/admin";
   if (isAuthorityRole(role)) return "/authority";
   return "/student";
-};
-
-const normalizeRole = (role?: string | null): Role => {
-  if (!role) return "student";
-  if (role === "department_authority") {
-    return "department_authority";
-  }
-  if (role === "admin") return "admin";
-  return "student";
 };
 
 const getSupabaseConfigError = () => {
@@ -115,6 +139,21 @@ type DatabaseIssue = {
   ai_category?: string | null;
   ai_summary?: string | null;
   ai_reason?: string | null;
+  ai_safety?: number | null;
+  ai_severity?: number | null;
+  ai_urgency?: number | null;
+  ai_frequency?: number | null;
+  ai_affected_population?: number | null;
+  ai_spam?: boolean | null;
+  ai_spam_reason?: string | null;
+  ai_recurrence_count?: number | null;
+  ai_similarity_score?: number | null;
+  similar_complaints?: Array<{
+    id: string;
+    category: string;
+    similarity: number;
+    same_category: boolean;
+  }>;
   routing_exception?: boolean;
   status_history?: Array<{
     id: string | number;
@@ -131,6 +170,7 @@ type DatabaseIssue = {
   image_path?: string | null;
   verification_status: string;
   verification_note?: string | null;
+  additional_info_provided?: string | null;
   verified_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -168,13 +208,29 @@ const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint =
     evidenceUrl: issue.image_path || undefined,
     verificationStatus,
     verificationReason: issue.verification_note || undefined,
+    additionalInfoProvided: issue.additional_info_provided || undefined,
     verificationDate: issue.verified_at || undefined,
     resolutionStatus,
     priority: issue.priority_level || issue.priority,
     priorityScore: issue.priority_score ?? undefined,
-    aiCategory: issue.ai_category as ComplaintCategory | undefined,
+    aiCategory: issue.ai_category as Complaint["aiCategory"],
     aiSummary: issue.ai_summary || undefined,
     aiReason: issue.ai_reason || undefined,
+    aiSafety: issue.ai_safety ?? undefined,
+    aiSeverity: issue.ai_severity ?? undefined,
+    aiUrgency: issue.ai_urgency ?? undefined,
+    aiFrequency: issue.ai_frequency ?? undefined,
+    aiAffectedPopulation: issue.ai_affected_population ?? undefined,
+    aiSpam: issue.ai_spam ?? undefined,
+    aiSpamReason: issue.ai_spam_reason || undefined,
+    aiRecurrenceCount: issue.ai_recurrence_count ?? undefined,
+    aiSimilarityScore: issue.ai_similarity_score ?? undefined,
+    similarComplaints: issue.similar_complaints?.map((match) => ({
+      id: match.id,
+      category: match.category as NonNullable<Complaint["aiCategory"]>,
+      similarity: match.similarity,
+      sameCategory: match.same_category,
+    })),
     routingException: issue.routing_exception ?? false,
     assignedDepartment: issue.assigned_department || undefined,
     submittedBy: {
@@ -198,12 +254,18 @@ const mapDatabaseIssue = (issue: DatabaseIssue, user?: User | null): Complaint =
       },
       ...(issue.status_history || []).map((event) => ({
         id: String(event.id),
-        title: event.new_status === "in_progress" ? "Work in progress" : "Complaint resolved",
-        description: event.comment,
+        title: event.comment.startsWith("Student provided additional information:")
+          ? "Additional Information Provided"
+          : event.comment.startsWith("Student confirmed resolution:")
+            ? "Resolution Confirmed by Student"
+            : event.comment.startsWith("Student reopened complaint:")
+              ? "Complaint Reopened"
+              : event.new_status === "in_progress" ? "Work in progress" : event.new_status === "resolved" ? "Complaint resolved" : "Complaint status updated",
+        description: event.comment.replace(/^Student (?:provided additional information|confirmed resolution|reopened complaint):\s*/, ""),
         timestamp: event.created_at,
         status: event.new_status,
         actor: event.actor_id === user?.id ? `${user?.role || "User"}` : "Campus team",
-        type: event.new_status === "resolved" ? "resolved" as const : "progress" as const,
+        type: event.comment.startsWith("Student provided additional information:") ? "info_provided" as const : event.comment.startsWith("Student reopened complaint:") ? "reopened" as const : event.new_status === "resolved" ? "resolved" as const : "progress" as const,
       })),
     ],
   };
@@ -235,7 +297,7 @@ const buildProfileFromUser = async (user: { id: string; email?: string | null; u
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, full_name, role, department")
+    .select("id, full_name, role, department, authority_scope")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -244,42 +306,20 @@ const buildProfileFromUser = async (user: { id: string; email?: string | null; u
   }
 
   if (!profile) {
-    const name =
-      (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name) ||
-      (typeof user.user_metadata?.name === "string" && user.user_metadata.name) ||
-      (typeof user.email === "string" && user.email.split("@")[0]) ||
-      "Campus User";
-
-    const { data: insertedProfile, error: insertError } = await supabase
-      .from("profiles")
-      .insert({
-        id: user.id,
-        full_name: name,
-        role: "student",
-      })
-      .select("id, full_name, role, department")
-      .single();
-
-    if (insertError) {
-      throw new Error(insertError.message || "Unable to create the user profile.");
-    }
-
-    return {
-      id: insertedProfile.id,
-      name: insertedProfile.full_name || name,
-      email: user.email || "",
-      role: normalizeRole(insertedProfile.role),
-      department: insertedProfile.department ?? undefined,
-      avatar: undefined,
-    } satisfies User;
+    throw new Error("No CampusFix profile is registered for this account. Contact an administrator to restore your profile.");
   }
+
+  if (profile.id !== user.id) throw new Error("The CampusFix profile does not match the signed-in account.");
+  const role = normalizeProfileRole(profile.role);
+  if (!role) throw new Error("This CampusFix profile has an invalid role. Contact an administrator.");
 
   return {
     id: profile.id,
     name: profile.full_name || user.email || "Campus User",
     email: user.email || "",
-    role: normalizeRole(profile.role),
+    role,
     department: profile.department ?? undefined,
+    authorityScope: profile.authority_scope as User["authorityScope"],
     avatar: undefined,
   } satisfies User;
 };
@@ -287,23 +327,61 @@ const buildProfileFromUser = async (user: { id: string; email?: string | null; u
 export function CampusFixProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [syncState, setSyncState] = useState<"loading" | "syncing" | "realtime" | "polling" | "error">("loading");
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const activeLoadRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
+  const syncTransportRef = useRef<"realtime" | "polling">("polling");
 
   const loadComplaints = async (user: User, accessToken: string) => {
+    if (activeLoadRef.current) {
+      refreshQueuedRef.current = true;
+      return activeLoadRef.current;
+    }
+
     const endpoint = isAuthorityRole(user.role)
       ? "/api/authority/issues"
       : "/api/issues";
-    const response = await fetch(endpoint, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
-    if (!response.ok) {
-      throw new Error(await apiError(response));
+    const task = (async () => {
+      try {
+        do {
+          refreshQueuedRef.current = false;
+          setSyncState("syncing");
+          const response = await fetch(endpoint, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            cache: "no-store",
+          });
+          if (!response.ok) throw new Error(await apiError(response));
+          const payload = (await response.json()) as { issues?: DatabaseIssue[] };
+          setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+        } while (refreshQueuedRef.current);
+        setSyncError(null);
+        setSyncState(syncTransportRef.current);
+      } catch (error) {
+        setSyncError(error instanceof Error ? error.message : "Could not synchronize complaint data.");
+        setSyncState("error");
+        throw error;
+      }
+    })();
+    activeLoadRef.current = task;
+    try {
+      await task;
+    } finally {
+      if (activeLoadRef.current === task) activeLoadRef.current = null;
     }
+  };
 
-    const payload = (await response.json()) as { issues?: DatabaseIssue[] };
-    setComplaints((payload.issues || []).map((issue) => mapDatabaseIssue(issue, user)));
+  const refreshComplaints = async () => {
+    if (!currentUser) return;
+    const { data: { session } } = await createClient().auth.getSession();
+    if (!session?.access_token || session.user.id !== currentUser.id) {
+      setSyncError("Your session expired. Sign in again to refresh complaints.");
+      setSyncState("error");
+      return;
+    }
+    await loadComplaints(currentUser, session.access_token);
   };
 
   useEffect(() => {
@@ -317,7 +395,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
         if (!session?.user) {
           setCurrentUser(null);
           setComplaints([]);
-          setNotifications([]);
+          setReadNotificationIds(new Set());
           return;
         }
 
@@ -326,8 +404,10 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
         if (session.access_token) {
           await loadComplaints(user, session.access_token);
         }
-      } catch {
+      } catch (error) {
         setComplaints([]);
+        setSyncError(error instanceof Error ? error.message : "Could not load complaints.");
+        setSyncState("error");
       } finally {
         setIsLoading(false);
       }
@@ -342,7 +422,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       if (event === "SIGNED_OUT") {
         setCurrentUser(null);
         setComplaints([]);
-        setNotifications([]);
+        setReadNotificationIds(new Set());
         return;
       }
 
@@ -351,8 +431,10 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
           const user = await buildProfileFromUser(session.user);
           setCurrentUser(user);
           await loadComplaints(user, session.access_token);
-        } catch {
+        } catch (error) {
           setComplaints([]);
+          setSyncError(error instanceof Error ? error.message : "Could not load complaints.");
+          setSyncState("error");
         }
       }
     });
@@ -360,17 +442,99 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Sync state helpers
-  const saveComplaints = (newComplaints: Complaint[]) => {
-    setComplaints(newComplaints);
-  };
+  // Keep dashboards in sync when complaints change. Realtime provides quick
+  // updates; polling and focus refresh cover dropped events or disabled realtime.
+  useEffect(() => {
+    if (!currentUser) return;
 
-  const saveNotifications = (newNotifs: NotificationItem[]) => {
-    setNotifications(newNotifs);
+    let cancelled = false;
+    let removeChannel: (() => void) | undefined;
+    let eventTimer: number | undefined;
+    const refresh = async () => {
+      try {
+        if (!cancelled) await refreshComplaints();
+      } catch {
+        // The visible sync state includes the error; the next poll retries.
+      }
+    };
+    const scheduleRefresh = () => {
+      if (eventTimer) window.clearTimeout(eventTimer);
+      eventTimer = window.setTimeout(() => { void refresh(); }, 250);
+    };
+    const onFocus = () => { void refresh(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    const refreshInterval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 15_000);
+
+    const connect = async () => {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (cancelled || !session?.access_token) return;
+      const channel = supabase.channel(`user-issues-${currentUser.id}`);
+      const filter = currentUser.role === "student"
+        ? { filter: `reporter_id=eq.${currentUser.id}` }
+        : isAuthorityRole(currentUser.role) && currentUser.authorityScope !== "all_departments"
+          ? { filter: `assigned_department=eq.${backendDepartment(currentUser.department || "")}` }
+          : {};
+      channel
+        .on("postgres_changes", {
+          event: "*",
+          schema: "public",
+          table: "issues",
+          ...filter,
+        }, () => {
+          scheduleRefresh();
+        })
+        .on("postgres_changes", {
+          event: "*",
+          schema: "public",
+          table: "issue_updates",
+        }, scheduleRefresh)
+        .subscribe((status) => {
+          const connected = status === "SUBSCRIBED";
+          syncTransportRef.current = connected ? "realtime" : "polling";
+          setSyncState((current) => current === "error" || current === "syncing"
+            ? current
+            : connected ? "realtime" : "polling");
+        });
+      removeChannel = () => { void supabase.removeChannel(channel); };
+    };
+    void connect();
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(refreshInterval);
+      if (eventTimer) window.clearTimeout(eventTimer);
+      removeChannel?.();
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.READ_NOTIFICATIONS);
+        const values: unknown = raw ? JSON.parse(raw) : [];
+        setReadNotificationIds(new Set(Array.isArray(values) ? values.filter((id): id is string => typeof id === "string") : []));
+      } catch {
+        setReadNotificationIds(new Set());
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const notifications = useMemo(() => deriveNotifications(complaints, readNotificationIds), [complaints, readNotificationIds]);
+
+  const persistReadNotificationIds = (ids: Set<string>) => {
+    setReadNotificationIds(ids);
     try {
-      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(newNotifs));
+      localStorage.setItem(STORAGE_KEYS.READ_NOTIFICATIONS, JSON.stringify([...ids]));
     } catch {
-      // LocalStorage error
+      // Read markers are a local UI preference; notifications themselves derive from database records.
     }
   };
 
@@ -417,7 +581,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       }
 
       const profile = await buildProfileFromUser(user);
-      const expectedRole = normalizeRole(role);
+      const expectedRole = role;
       if (profile.role !== expectedRole) {
         await supabase.auth.signOut();
         const expectedRoleLabel =
@@ -462,13 +626,12 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
 
     saveUser(null);
     setComplaints([]);
-    setNotifications([]);
+          setReadNotificationIds(new Set());
     return { success: true };
   };
 
   const submitComplaint = async (data: {
     title: string;
-    category: ComplaintCategory;
     description: string;
     campusLocation: string;
     specificLocation: string;
@@ -486,26 +649,56 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({
         title: data.title,
         description: data.description,
-        category: getDatabaseCategory(data.category),
         location: `${data.campusLocation} - ${data.specificLocation}`,
       }),
     });
     if (!response.ok) throw new Error(await apiError(response));
     const payload = (await response.json()) as {
       issue: DatabaseIssue;
-      analysis?: { available: boolean; category: ComplaintCategory | null; summary: string | null; priority: Priority; priorityScore: number; reason: string | null };
+      analysis?: {
+        available: boolean;
+        category: AIComplaintCategory;
+        categoryConfidence: number;
+        summary: string | null;
+        priority: Priority;
+        priorityScore: number;
+        reason: string | null;
+        affectedPopulation: number | null;
+        spam: boolean | null;
+        spamReason: string | null;
+      };
+      similarities?: Array<{ similar_issue_id: string; related_category: string; similarity: number; same_category: boolean }>;
     };
     const created = mapDatabaseIssue(payload.issue, currentUser);
     if (payload.analysis) {
       created.priority = payload.analysis.priority;
       created.priorityScore = payload.analysis.priorityScore;
-      created.aiCategory = payload.analysis.category ?? undefined;
+      created.aiCategory = payload.analysis.category;
       created.aiSummary = payload.analysis.summary ?? undefined;
       created.aiReason = payload.analysis.reason ?? undefined;
       created.aiAvailable = payload.analysis.available;
+      created.aiAffectedPopulation = payload.analysis.affectedPopulation ?? undefined;
+      created.aiSpam = payload.analysis.spam ?? undefined;
+      created.aiSpamReason = payload.analysis.spamReason ?? undefined;
     }
+    created.similarComplaints = payload.similarities?.map((match) => ({
+      id: match.similar_issue_id,
+      category: match.related_category as AIComplaintCategory,
+      similarity: match.similarity,
+      sameCategory: match.same_category,
+    }));
+    // Update shared UI immediately from the database's insert response. This
+    // keeps the new complaint visible even if the follow-up list request fails.
+    setComplaints((previous) => [
+      created,
+      ...previous.filter((item) => item.id !== created.id),
+    ]);
     if (currentUser) {
-      await loadComplaints(currentUser, token);
+      try {
+        await loadComplaints(currentUser, token);
+      } catch (error) {
+        console.error("Complaint was saved, but the list refresh failed:", error);
+      }
     }
     return created;
   };
@@ -565,36 +758,22 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
       : item));
   };
 
-  const provideAdditionalInfo = async (id: string, message: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 600));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints = complaints.map((c) => {
-      if (c.id !== id) return c;
-
-      const newTimeline: TimelineEvent[] = [
-        ...c.timeline,
-        {
-          id: `evt-${Date.now()}`,
-          title: "Additional Information Provided",
-          description: message,
-          timestamp: nowIso,
-          status: "Info Provided",
-          actor: `Student (${currentUser?.name || "Student"})`,
-          type: "info_provided",
-        },
-      ];
-
-      return {
-        ...c,
-        verificationStatus: "awaiting_verification" as const,
-        additionalInfoProvided: message,
-        updatedAt: nowIso,
-        timeline: newTimeline,
-      };
+  const runStudentComplaintAction = async (id: string, action: "provide_info" | "confirm_resolution" | "reopen", message = "") => {
+    if (currentUser?.role !== "student") throw new Error("Only the complaint's student reporter can perform this action.");
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token || session.user.id !== currentUser.id) throw new Error("Your session has expired. Please sign in again.");
+    const { error } = await supabase.rpc("campusfix_student_complaint_action", {
+      p_issue_id: id,
+      p_action: action,
+      p_message: message.trim(),
     });
+    if (error) throw new Error(error.message || "Could not save the complaint update.");
+    await loadComplaints(currentUser, session.access_token);
+  };
 
-    saveComplaints(updatedComplaints);
+  const provideAdditionalInfo = async (id: string, message: string): Promise<void> => {
+    await runStudentComplaintAction(id, "provide_info", message);
   };
 
   const assignDepartment = async (
@@ -631,6 +810,20 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
     setComplaints((previous) => previous.map((item) => item.id === id
       ? { ...item, priority, updatedAt: payload.issue.updated_at }
       : item));
+  };
+
+  const updateAIComplaintCategory = async (id: string, category: AIComplaintCategory): Promise<void> => {
+    if (currentUser?.role !== "admin") throw new Error("Only administrators can correct complaint classifications.");
+    const { data: session } = await createClient().auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) throw new Error("Your session has expired. Please sign in again.");
+    const response = await fetch(`/api/admin/issues/${id}/category`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ category }),
+    });
+    if (!response.ok) throw new Error(await apiError(response));
+    if (currentUser) await loadComplaints(currentUser, token);
   };
 
   const updateStatus = async (
@@ -689,74 +882,19 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
   };
 
   const confirmResolution = async (id: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 400));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints: Complaint[] = complaints.map((c) => {
-      if (c.id !== id) return c;
-      const newEvent: TimelineEvent = {
-        id: `evt-${Date.now()}`,
-        title: "Resolution Confirmed by Student",
-        description: "Student confirmed the repair/fix is satisfactory.",
-        timestamp: nowIso,
-        status: "Resolved & Confirmed",
-        actor: `Student (${currentUser?.name || "Student"})`,
-        type: "resolved",
-      };
-      return {
-        ...c,
-        timeline: [...c.timeline, newEvent],
-      };
-    });
-
-    saveComplaints(updatedComplaints);
+    await runStudentComplaintAction(id, "confirm_resolution");
   };
 
   const reopenComplaint = async (id: string, reason: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 500));
-    const nowIso = new Date().toISOString();
-
-    const updatedComplaints: Complaint[] = complaints.map((c) => {
-      if (c.id !== id) return c;
-      const newEvent: TimelineEvent = {
-        id: `evt-${Date.now()}`,
-        title: "Complaint Reopened",
-        description: reason,
-        timestamp: nowIso,
-        status: "Reopened",
-        actor: `Student (${currentUser?.name || "Student"})`,
-        type: "reopened",
-      };
-      return {
-        ...c,
-        resolutionStatus: "reopened" as const,
-        updatedAt: nowIso,
-        timeline: [...c.timeline, newEvent],
-      };
-    });
-
-    saveComplaints(updatedComplaints);
-
-    const newNotif: NotificationItem = {
-      id: `notif-${Date.now()}`,
-      title: "Complaint Reopened",
-      message: `Complaint ${id} was reopened by the student: "${reason}"`,
-      timestamp: nowIso,
-      read: false,
-      complaintId: id,
-      type: "status",
-    };
-    saveNotifications([newNotif, ...notifications]);
+    await runStudentComplaintAction(id, "reopen", reason);
   };
 
   const markNotificationRead = (id: string) => {
-    const updated = notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
-    saveNotifications(updated);
+    persistReadNotificationIds(new Set([...readNotificationIds, id]));
   };
 
   const markAllNotificationsRead = () => {
-    const updated = notifications.map((n) => ({ ...n, read: true }));
-    saveNotifications(updated);
+    persistReadNotificationIds(new Set([...readNotificationIds, ...notifications.map((item) => item.id)]));
   };
 
   const getComplaintById = (id: string) => {
@@ -772,6 +910,9 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
         complaints,
         notifications,
         isLoading,
+        syncState,
+        syncError,
+        refreshComplaints,
         login,
         logout,
         submitComplaint,
@@ -781,6 +922,7 @@ export function CampusFixProvider({ children }: { children: React.ReactNode }) {
         provideAdditionalInfo,
         assignDepartment,
         updatePriority,
+        updateAIComplaintCategory,
         updateStatus,
         resolveComplaintByAuthority,
         confirmResolution,

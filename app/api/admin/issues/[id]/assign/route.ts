@@ -130,7 +130,6 @@ export async function POST(
       .update({
         assigned_department: department,
         status: "assigned",
-        assigned_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -141,11 +140,19 @@ export async function POST(
       .maybeSingle();
 
     if (updateError) {
-      console.error("Assignment update failed:", updateError.message);
-      return jsonError(
-        "Could not assign the complaint. Check Supabase RLS permissions.",
-        500
-      );
+      console.error("Assignment update failed:", {
+        issueId: id,
+        code: updateError.code,
+        message: updateError.message,
+      });
+
+      if (updateError.code === "42501") {
+        return jsonError("The database denied permission to assign this complaint.", 403);
+      }
+      if (updateError.code === "42703" || updateError.code === "PGRST204") {
+        return jsonError("The assignment could not be saved because the database schema is missing a required field.", 500);
+      }
+      return jsonError("Unable to save the complaint assignment due to a database error.", 500);
     }
 
     if (!updatedIssue) {

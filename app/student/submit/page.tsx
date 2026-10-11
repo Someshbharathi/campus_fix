@@ -19,8 +19,8 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
-import { CAMPUS_LOCATIONS, CATEGORIES } from "@/lib/constants";
-import { ComplaintCategory } from "@/lib/types";
+import { CAMPUS_LOCATIONS } from "@/lib/constants";
+import { getAIComplaintCategoryLabel } from "@/lib/ai/categories";
 import { Modal } from "@/components/ui/modal";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +33,6 @@ export default function SubmitComplaintPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState<ComplaintCategory>("electrical");
   const [campusLocation, setCampusLocation] = useState(CAMPUS_LOCATIONS[0]);
   const [specificLocation, setSpecificLocation] = useState("");
   const [description, setDescription] = useState("");
@@ -47,7 +46,7 @@ export default function SubmitComplaintPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [createdComplaintId, setCreatedComplaintId] = useState<string | null>(null);
-  const [aiResult, setAiResult] = useState<{ available: boolean; priority: string; score: number; summary?: string; reason?: string } | null>(null);
+  const [aiResult, setAiResult] = useState<{ available: boolean; priority: string; score: number; category?: string; summary?: string; reason?: string } | null>(null);
 
   useEffect(() => {
     const previewUrl = fileAttachment?.previewUrl;
@@ -108,7 +107,6 @@ export default function SubmitComplaintPage() {
   const resetForm = () => {
     removeAttachment();
     setTitle("");
-    setCategory("electrical");
     setCampusLocation(CAMPUS_LOCATIONS[0]);
     setSpecificLocation("");
     setDescription("");
@@ -138,7 +136,6 @@ export default function SubmitComplaintPage() {
     try {
       const created = await submitComplaint({
         title: title.trim(),
-        category,
         campusLocation,
         specificLocation: specificLocation.trim(),
         description: description.trim(),
@@ -151,6 +148,7 @@ export default function SubmitComplaintPage() {
         available: created.aiAvailable ?? false,
         priority: created.priority,
         score: created.priorityScore ?? 0,
+        category: created.aiCategory,
         summary: created.aiSummary,
         reason: created.aiReason,
       });
@@ -212,12 +210,8 @@ export default function SubmitComplaintPage() {
               {errors.title && <p id="title-error" className="mt-2 flex items-center gap-1.5 text-xs font-medium text-rose-600"><AlertCircle className="h-3.5 w-3.5" />{errors.title}</p>}
             </div>
             <div className="grid gap-5 md:grid-cols-2">
-              <div>
-                <label htmlFor="category" className="mb-2 block text-sm font-semibold text-slate-800 dark:text-slate-200">Category <span className="text-rose-500">*</span></label>
-                <select id="category" value={category} onChange={(event) => setCategory(event.target.value as ComplaintCategory)} className={inputClass}>
-                  {CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                </select>
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Usually routed to <span className="font-semibold text-slate-700 dark:text-slate-300">{CATEGORIES.find((item) => item.id === category)?.department}</span></p>
+              <div className="flex items-center rounded-xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 text-sm text-indigo-800 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-200">
+                CampusFix AI will classify this complaint and route it to the appropriate team after submission.
               </div>
             </div>
             <div>
@@ -258,7 +252,7 @@ export default function SubmitComplaintPage() {
 
       <Modal isOpen={discardModalOpen} onClose={() => setDiscardModalOpen(false)} title="Discard this draft?" maxWidth="sm"><div className="space-y-4"><p className="text-sm leading-6 text-slate-600 dark:text-slate-400">Your changes have not been submitted. Discard this draft and return to the dashboard?</p><div className="flex justify-end gap-2"><button type="button" onClick={() => setDiscardModalOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">Continue editing</button><button type="button" onClick={() => { setDiscardModalOpen(false); resetForm(); router.push("/student"); }} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white">Discard draft</button></div></div></Modal>
 
-      <Modal isOpen={Boolean(createdComplaintId)} onClose={() => router.push(`/student/complaints/${createdComplaintId}`)} title="Complaint submitted" maxWidth="md"><div className="space-y-5 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400"><CheckCircle2 className="h-7 w-7" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Tracking ID</p><p className="mt-2 break-all font-mono text-xl font-bold text-indigo-600 dark:text-indigo-400">{createdComplaintId}</p></div><div className="mx-auto max-w-sm rounded-xl bg-indigo-50 p-3 text-left text-sm dark:bg-indigo-950/40"><p className="font-semibold text-indigo-900 dark:text-indigo-200">{aiResult?.available ? "AI priority suggestion" : "Fallback priority estimate"}: {aiResult?.priority} {aiResult?.score ? `(${aiResult.score}/100)` : ""}</p>{aiResult?.summary && <p className="mt-1 text-slate-600 dark:text-slate-300">{aiResult.summary}</p>}<p className="mt-1 text-xs text-slate-500">Department routing is determined securely by the server.</p></div><p className="mx-auto max-w-sm text-sm leading-6 text-slate-500 dark:text-slate-400">Your complaint is routed to the appropriate campus team. Keep this ID for reference.</p><div className="grid gap-2 sm:grid-cols-3"><Link href={`/student/complaints/${createdComplaintId}`} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-semibold text-white hover:bg-indigo-700">Track complaint</Link><Link href="/student" className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Back to dashboard</Link><button type="button" onClick={() => setCreatedComplaintId(null)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Submit another</button></div></div></Modal>
+      <Modal isOpen={Boolean(createdComplaintId)} onClose={() => router.push(`/student/complaints/${createdComplaintId}`)} title="Complaint submitted" maxWidth="md"><div className="space-y-5 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400"><CheckCircle2 className="h-7 w-7" /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Tracking ID</p><p className="mt-2 break-all font-mono text-xl font-bold text-indigo-600 dark:text-indigo-400">{createdComplaintId}</p></div><div className="mx-auto max-w-sm rounded-xl bg-indigo-50 p-3 text-left text-sm dark:bg-indigo-950/40"><p className="font-semibold text-indigo-900 dark:text-indigo-200">AI category: {getAIComplaintCategoryLabel(aiResult?.category)}</p><p className="font-semibold text-indigo-900 dark:text-indigo-200">{aiResult?.available ? "AI priority suggestion" : "Fallback priority estimate"}: {aiResult?.priority} {aiResult?.score ? `(${aiResult.score}/100)` : ""}</p>{aiResult?.summary && <p className="mt-1 text-slate-600 dark:text-slate-300">{aiResult.summary}</p>}<p className="mt-1 text-xs text-slate-500">Department routing is determined securely by the server.</p></div><p className="mx-auto max-w-sm text-sm leading-6 text-slate-500 dark:text-slate-400">Your complaint is routed to the appropriate campus team. Keep this ID for reference.</p><div className="grid gap-2 sm:grid-cols-3"><Link href={`/student/complaints/${createdComplaintId}`} className="rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-semibold text-white hover:bg-indigo-700">Track complaint</Link><Link href="/student" className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Back to dashboard</Link><button type="button" onClick={() => setCreatedComplaintId(null)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">Submit another</button></div></div></Modal>
     </div>
   );
 }

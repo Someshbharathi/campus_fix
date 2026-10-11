@@ -15,12 +15,14 @@ import {
   FileText,
   SlidersHorizontal,
   ChevronRight,
+  HelpCircle,
+  XCircle,
+  UserCheck,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
 import { StatCard } from "@/components/ui/stat-card";
 import { VerificationBadge, ResolutionBadge, PriorityBadge } from "@/components/ui/badge";
-import { CATEGORIES } from "@/lib/constants";
-import { ComplaintCategory, ResolutionStatus, VerificationStatus } from "@/lib/types";
+import { AI_CATEGORY_OPTIONS, getAIComplaintCategoryLabel } from "@/lib/ai/categories";
 
 export default function StudentDashboardPage() {
   const { currentUser, complaints } = useCampusFix();
@@ -41,6 +43,9 @@ export default function StudentDashboardPage() {
   const resolvedCount = studentComplaints.filter(
     (c) => c.resolutionStatus === "resolved"
   ).length;
+  const assignedCount = studentComplaints.filter((c) => c.verificationStatus === "verified" && c.resolutionStatus === "pending_assignment").length;
+  const rejectedCount = studentComplaints.filter((c) => c.verificationStatus === "rejected").length;
+  const clarificationCount = studentComplaints.filter((c) => c.verificationStatus === "info_requested").length;
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -68,11 +73,15 @@ export default function StudentDashboardPage() {
         matchesStatus = item.resolutionStatus === "resolved";
       } else if (statusFilter === "rejected") {
         matchesStatus = item.verificationStatus === "rejected";
+      } else if (statusFilter === "assigned") {
+        matchesStatus = item.verificationStatus === "verified" && item.resolutionStatus === "pending_assignment";
+      } else if (statusFilter === "clarification") {
+        matchesStatus = item.verificationStatus === "info_requested";
       }
 
       // Category
       const matchesCategory =
-        categoryFilter === "all" || item.category === categoryFilter;
+        categoryFilter === "all" || item.aiCategory === categoryFilter;
 
       return matchesSearch && matchesStatus && matchesCategory;
     });
@@ -116,8 +125,8 @@ export default function StudentDashboardPage() {
         </Link>
       </div>
 
-      {/* 4 Summary Stat Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+      {/* Counts are derived from the authenticated student's database rows. */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 sm:gap-5">
         <StatCard
           title="Total Complaints"
           count={totalCount}
@@ -137,6 +146,15 @@ export default function StudentDashboardPage() {
           isActive={statusFilter === "awaiting_verification"}
         />
         <StatCard
+          title="Approved / Assigned"
+          count={assignedCount}
+          icon={<UserCheck className="h-5 w-5" />}
+          subtitle="Verified, awaiting work"
+          colorScheme="indigo"
+          onClick={() => setStatusFilter("assigned")}
+          isActive={statusFilter === "assigned"}
+        />
+        <StatCard
           title="In Progress"
           count={inProgressCount}
           icon={<RotateCcw className="h-5 w-5" />}
@@ -154,6 +172,8 @@ export default function StudentDashboardPage() {
           onClick={() => setStatusFilter("resolved")}
           isActive={statusFilter === "resolved"}
         />
+        <StatCard title="Rejected" count={rejectedCount} icon={<XCircle className="h-5 w-5" />} subtitle="Closed during review" colorScheme="rose" onClick={() => setStatusFilter("rejected")} isActive={statusFilter === "rejected"} />
+        <StatCard title="Clarification" count={clarificationCount} icon={<HelpCircle className="h-5 w-5" />} subtitle="More details requested" colorScheme="sky" onClick={() => setStatusFilter("clarification")} isActive={statusFilter === "clarification"} />
       </div>
 
       {/* Recent Complaints Section */}
@@ -194,6 +214,8 @@ export default function StudentDashboardPage() {
               <option value="in_progress">In Progress</option>
               <option value="resolved">Resolved</option>
               <option value="rejected">Rejected</option>
+              <option value="assigned">Approved / Assigned</option>
+              <option value="clarification">Clarification Requested</option>
             </select>
 
             {/* Category Filter */}
@@ -203,7 +225,7 @@ export default function StudentDashboardPage() {
               className="h-9 px-3 text-xs rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-600"
             >
               <option value="all">All Categories</option>
-              {CATEGORIES.map((cat) => (
+              {AI_CATEGORY_OPTIONS.map((cat) => (
                 <option key={cat.id} value={cat.id}>
                   {cat.label}
                 </option>
@@ -294,7 +316,7 @@ export default function StudentDashboardPage() {
                     {/* Category */}
                     <td className="py-4 px-4 hidden md:table-cell whitespace-nowrap">
                       <span className="capitalize text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md font-medium text-[11px]">
-                        {CATEGORIES.find((c) => c.id === item.category)?.label || item.category}
+                        {getAIComplaintCategoryLabel(item.aiCategory)}
                       </span>
                     </td>
 

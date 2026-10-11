@@ -1,3 +1,5 @@
+import type { AIComplaintCategory } from "@/lib/ai/categories";
+
 export type Role = "student" | "admin" | "department_authority";
 
 export type VerificationStatus =
@@ -74,10 +76,25 @@ export interface Complaint {
   resolutionStatus: ResolutionStatus;
   priority: Priority;
   priorityScore?: number;
-  aiCategory?: ComplaintCategory;
+  aiCategory?: AIComplaintCategory;
   aiSummary?: string;
   aiReason?: string;
   aiAvailable?: boolean;
+  aiSafety?: number;
+  aiSeverity?: number;
+  aiUrgency?: number;
+  aiFrequency?: number;
+  aiAffectedPopulation?: number;
+  aiSpam?: boolean;
+  aiSpamReason?: string;
+  aiRecurrenceCount?: number;
+  aiSimilarityScore?: number;
+  similarComplaints?: Array<{
+    id: string;
+    category: AIComplaintCategory;
+    similarity: number;
+    sameCategory: boolean;
+  }>;
   routingException?: boolean;
   assignedDepartment?: string;
   assignedPerson?: string;
@@ -108,6 +125,7 @@ export interface User {
   role: Role;
   rollNumber?: string;
   department?: string;
+  authorityScope?: "all_departments" | "assigned_department";
   avatar?: string;
 }
 

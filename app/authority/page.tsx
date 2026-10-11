@@ -23,15 +23,18 @@ import {
   ShieldAlert,
   ArrowRight,
   Sparkles,
+  HelpCircle,
+  XCircle,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
-import { DEPARTMENTS, CATEGORIES } from "@/lib/constants";
+import { CATEGORIES } from "@/lib/constants";
 import { Complaint, Priority, ResolutionStatus } from "@/lib/types";
 import { PriorityBadge, ResolutionBadge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { StatCard } from "@/components/ui/stat-card";
 import { cn } from "@/lib/utils";
-import { getDepartmentDisplayName } from "@/lib/department-routing";
+import { DEPARTMENT_OPTIONS, getCanonicalDepartment, getDepartmentDisplayName } from "@/lib/department-routing";
+import { AI_CATEGORY_OPTIONS, getAIComplaintCategoryLabel } from "@/lib/ai/categories";
 
 export default function AuthorityDashboardPage() {
   const {
@@ -41,12 +44,15 @@ export default function AuthorityDashboardPage() {
     resolveComplaintByAuthority,
   } = useCampusFix();
 
-  const userDepartment = currentUser?.department || "Electrical Maintenance";
+  const userDepartment = currentUser?.department;
+  const canonicalUserDepartment = userDepartment ? getCanonicalDepartment(userDepartment) || userDepartment : undefined;
+  const canViewAllDepartments = currentUser?.authorityScope === "all_departments";
 
   // Tab & Search filters
-  const [activeTab, setActiveTab] = useState<"all" | "my_dept" | "in_progress" | "resolved">("my_dept");
+  const [activeTab, setActiveTab] = useState<"all" | "my_dept" | "in_progress" | "resolved">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
 
   // Interaction modals
   const [selectedTask, setSelectedTask] = useState<Complaint | null>(null);
@@ -59,16 +65,17 @@ export default function AuthorityDashboardPage() {
   const [resolutionProofUrl, setResolutionProofUrl] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // The department is the first work queue; pending intake is actionable while
-  // rejected, clarification, and sensitive-review states remain excluded.
+  // The API returns only database records authorized for this account.
   const authorityOrders = useMemo(() => {
     return complaints.filter((c) => {
       if (!c.assignedDepartment || !["awaiting_verification", "verified"].includes(c.verificationStatus)) return false;
-      if (c.assignedDepartment !== userDepartment) return false;
+      const canonicalComplaintDepartment = getCanonicalDepartment(c.assignedDepartment) || c.assignedDepartment;
+      if (!canViewAllDepartments && canonicalComplaintDepartment !== canonicalUserDepartment) return false;
+      if (departmentFilter !== "all" && canonicalComplaintDepartment !== departmentFilter) return false;
 
       // Tab filter
       if (activeTab === "my_dept") {
-        if (c.assignedDepartment !== userDepartment) return false;
+        if ((getCanonicalDepartment(c.assignedDepartment) || c.assignedDepartment) !== canonicalUserDepartment) return false;
       } else if (activeTab === "in_progress") {
         if (c.resolutionStatus !== "in_progress") return false;
       } else if (activeTab === "resolved") {
@@ -86,6 +93,7 @@ export default function AuthorityDashboardPage() {
         const matches =
           c.id.toLowerCase().includes(q) ||
           c.title.toLowerCase().includes(q) ||
+          c.description.toLowerCase().includes(q) ||
           c.campusLocation.toLowerCase().includes(q) ||
           c.specificLocation.toLowerCase().includes(q) ||
           (c.assignedDepartment && c.assignedDepartment.toLowerCase().includes(q));
@@ -94,27 +102,26 @@ export default function AuthorityDashboardPage() {
 
       return true;
     });
-  }, [complaints, activeTab, priorityFilter, searchQuery, userDepartment]);
+  }, [complaints, activeTab, priorityFilter, searchQuery, canonicalUserDepartment, canViewAllDepartments, departmentFilter]);
 
-  // Metric counts
-  const totalMyDept = complaints.filter(
-    (c) => ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment
-  ).length;
-
-  const inProgressCount = complaints.filter(
-    (c) => ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment && c.resolutionStatus === "in_progress"
-  ).length;
-
-  const criticalUrgentCount = complaints.filter(
-    (c) =>
-      ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment &&
-      c.resolutionStatus !== "resolved" &&
-      (c.priority === "critical" || c.priority === "high")
-  ).length;
-
-  const resolvedTotal = complaints.filter(
-    (c) => ["awaiting_verification", "verified"].includes(c.verificationStatus) && c.assignedDepartment === userDepartment && c.resolutionStatus === "resolved"
-  ).length;
+  // Cards summarize all authorized department records; list filters do not alter them.
+  const assignedComplaints = complaints.filter((c) =>
+    Boolean(c.assignedDepartment) && ["awaiting_verification", "verified"].includes(c.verificationStatus) &&
+    (canViewAllDepartments || (getCanonicalDepartment(c.assignedDepartment || "") || c.assignedDepartment) === canonicalUserDepartment)
+  );
+  const inProgressCount = assignedComplaints.filter((c) => c.resolutionStatus === "in_progress").length;
+  const resolvedTotal = assignedComplaints.filter((c) => c.resolutionStatus === "resolved").length;
+  const pendingVerificationCount = complaints.filter((c) => c.verificationStatus === "awaiting_verification").length;
+  const awaitingWorkCount = complaints.filter((c) => c.verificationStatus === "verified" && c.resolutionStatus === "pending_assignment").length;
+  const rejectedOrClarificationCount = complaints.filter((c) => c.verificationStatus === "rejected" || c.verificationStatus === "info_requested").length;
+  const totalHighCriticalCount = complaints.filter((c) => c.resolutionStatus !== "resolved" && (c.priority === "critical" || c.priority === "high")).length;
+  const categoryCounts = AI_CATEGORY_OPTIONS.map((category) => ({
+    ...category,
+    count: complaints.filter((complaint) => complaint.aiCategory === category.id).length,
+  }));
+  const departmentCounts = Array.from(new Set(complaints.map((complaint) => complaint.assignedDepartment).filter((department): department is string => Boolean(department))))
+    .map((department) => ({ department, count: complaints.filter((complaint) => complaint.assignedDepartment === department).length }))
+    .sort((a, b) => b.count - a.count);
 
   // Actions
   const handleStartTask = async (c: Complaint) => {
@@ -123,7 +130,7 @@ export default function AuthorityDashboardPage() {
       await updateStatus(
         c.id,
         "in_progress",
-        `Work started on-site by ${currentUser?.name || "Department Authority"} (${userDepartment}). Tools and materials mobilized.`
+        `Work started on-site by ${currentUser?.name || "Department Authority"}. Tools and materials mobilized.`
       );
     } finally {
       setIsProcessing(false);
@@ -207,7 +214,7 @@ export default function AuthorityDashboardPage() {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-                  Department Authority Task Execution Unit
+                  Campus Operations Authority
                 </span>
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -215,31 +222,17 @@ export default function AuthorityDashboardPage() {
                 </span>
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-white">
-                {currentUser?.name || "Field Operations Lead"}
+                Campus Operations Authority
               </h1>
               <p className="text-xs text-slate-300 mt-0.5 flex flex-wrap items-center gap-2">
-                <span>Primary Department: <strong>{getDepartmentDisplayName(userDepartment)}</strong></span>
-                <span>•</span>
-                <span>Campus Works & Technical Maintenance</span>
+                <span>{canViewAllDepartments
+                  ? "Review, coordinate, and resolve campus complaints across all departments."
+                  : `Assigned department: ${getDepartmentDisplayName(userDepartment)}`}</span>
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => setActiveTab("my_dept")}
-              className={cn(
-                "px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5",
-                activeTab === "my_dept"
-                  ? "bg-sky-500 text-white shadow-md shadow-sky-500/20"
-                  : "bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60"
-              )}
-            >
-              <span>{getDepartmentDisplayName(userDepartment)}</span>
-              <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">
-                {totalMyDept}
-              </span>
-            </button>
             <button
               onClick={() => setActiveTab("all")}
               className={cn(
@@ -249,21 +242,23 @@ export default function AuthorityDashboardPage() {
                   : "bg-slate-800/80 text-slate-300 hover:bg-slate-800 border border-slate-700/60"
               )}
             >
-              All Campus Orders
+              Assigned Complaints
             </button>
           </div>
         </div>
       </div>
 
       {/* Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
         <StatCard
-          title="My Dept Orders"
-          count={totalMyDept}
+          title="Total Complaints"
+          count={complaints.length}
           icon={<Wrench className="h-5 w-5" />}
-          subtitle="Assigned to your field team"
+          subtitle={canViewAllDepartments ? "All departments" : "Your authorized scope"}
           colorScheme="sky"
         />
+        <StatCard title="Pending Verification" count={pendingVerificationCount} icon={<Clock className="h-5 w-5" />} subtitle="Awaiting administrative review" colorScheme="amber" />
+        <StatCard title="Approved / Awaiting Work" count={awaitingWorkCount} icon={<FileCheck2 className="h-5 w-5" />} subtitle="Verified for dispatch" colorScheme="indigo" />
         <StatCard
           title="In Progress"
           count={inProgressCount}
@@ -273,18 +268,36 @@ export default function AuthorityDashboardPage() {
         />
         <StatCard
           title="High & Critical"
-          count={criticalUrgentCount}
+          count={totalHighCriticalCount}
           icon={<AlertTriangle className="h-5 w-5" />}
           subtitle="Immediate attention required"
           colorScheme="rose"
         />
         <StatCard
-          title="Verified Resolved"
+          title="Resolved Complaints"
           count={resolvedTotal}
           icon={<CheckCircle2 className="h-5 w-5" />}
           subtitle="Fixed & confirmed closed"
           colorScheme="emerald"
         />
+        <StatCard title="Rejected / Clarification" count={rejectedOrClarificationCount} icon={rejectedOrClarificationCount ? <HelpCircle className="h-5 w-5" /> : <XCircle className="h-5 w-5" />} subtitle="Visible for operational context" colorScheme="rose" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Complaints by AI Category</h2>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {categoryCounts.filter((item) => item.count > 0).map((item) => <div key={item.id} className="flex justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs dark:bg-slate-950"><span>{getAIComplaintCategoryLabel(item.id)}</span><strong>{item.count}</strong></div>)}
+            {!categoryCounts.some((item) => item.count > 0) && <p className="text-xs text-slate-500">Category totals will appear when classified complaints are available.</p>}
+          </div>
+        </section>
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100">Complaints by Department</h2>
+          <div className="mt-3 space-y-2">
+            {departmentCounts.map((item) => <div key={item.department} className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs dark:bg-slate-950"><span>{getDepartmentDisplayName(item.department)}</span><strong>{item.count}</strong></div>)}
+            {!departmentCounts.length && <p className="text-xs text-slate-500">No department assignments in the authorized records.</p>}
+          </div>
+        </section>
       </div>
 
       {/* Work Orders List Header & Search Filter */}
@@ -292,19 +305,19 @@ export default function AuthorityDashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <span>Department Authority Work Orders</span>
+              <span>Department Work Orders</span>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
                 {authorityOrders.length}
               </span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Verified grievances forwarded by Administrators for physical repair and operational resolution.
+              Assigned campus complaints available for maintenance work and resolution.
             </p>
           </div>
 
           {/* Quick tab filters */}
           <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 text-xs font-semibold">
-            <button
+            {!canViewAllDepartments && <button
               onClick={() => setActiveTab("my_dept")}
               className={cn(
                 "px-3 py-1.5 rounded-lg transition-all",
@@ -313,8 +326,8 @@ export default function AuthorityDashboardPage() {
                   : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
               )}
             >
-              My Dept
-            </button>
+              My Department
+            </button>}
             <button
               onClick={() => setActiveTab("in_progress")}
               className={cn(
@@ -352,7 +365,7 @@ export default function AuthorityDashboardPage() {
         </div>
 
         {/* Search & Priority row */}
-        <div className="flex flex-col sm:flex-row gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex flex-col xl:flex-row gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
           <div className="relative flex-1">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
             <input
@@ -364,7 +377,16 @@ export default function AuthorityDashboardPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {canViewAllDepartments && <select
+              value={departmentFilter}
+              onChange={(event) => setDepartmentFilter(event.target.value)}
+              aria-label="Filter by department"
+              className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
+            >
+              <option value="all">All Departments</option>
+              {DEPARTMENT_OPTIONS.map((department) => <option key={department.canonical} value={department.canonical}>{department.label}</option>)}
+            </select>}
             <span className="text-xs text-slate-400 shrink-0 flex items-center gap-1">
               <Filter className="h-3.5 w-3.5" />
               Priority:
@@ -389,15 +411,16 @@ export default function AuthorityDashboardPage() {
         <div className="rounded-2xl border border-slate-200/80 bg-white p-16 text-center dark:border-slate-800 dark:bg-slate-900">
           <CheckCircle2 className="mx-auto h-12 w-12 text-sky-500 mb-3" />
           <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-            No Work Orders Matching Filter
+            No Assigned Complaints Match These Filters
           </h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-            There are currently no active forwarded tickets for this selection. When administrators verify new complaints, work orders will appear here automatically.
+            There are no assigned complaints matching the selected departments, status, priority, or search terms. New routed work orders will appear here automatically.
           </p>
           <button
             type="button"
             onClick={() => {
               setActiveTab("all");
+              setDepartmentFilter("all");
               setPriorityFilter("all");
               setSearchQuery("");
             }}

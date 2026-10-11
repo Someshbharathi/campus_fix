@@ -15,7 +15,8 @@ import {
   Layers,
 } from "lucide-react";
 import { useCampusFix } from "@/lib/store";
-import { CATEGORIES, DEPARTMENTS } from "@/lib/constants";
+import { DEPARTMENTS } from "@/lib/constants";
+import { AI_CATEGORY_OPTIONS } from "@/lib/ai/categories";
 import { getCanonicalDepartment } from "@/lib/department-routing";
 
 export default function AdminReportsPage() {
@@ -61,8 +62,8 @@ export default function AdminReportsPage() {
 
   // Category counts
   const categoryStats = useMemo(() => {
-    return CATEGORIES.map((cat) => {
-      const count = complaints.filter((c) => c.category === cat.id).length;
+    return AI_CATEGORY_OPTIONS.map((cat) => {
+      const count = complaints.filter((c) => (c.aiCategory ?? "other") === cat.id).length;
       const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
       return {
         ...cat,

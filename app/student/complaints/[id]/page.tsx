@@ -54,6 +54,7 @@ function StudentComplaintDetailsContent() {
 
   const {
     getComplaintById,
+    isLoading,
     provideAdditionalInfo,
     confirmResolution,
     reopenComplaint,
@@ -71,6 +72,16 @@ function StudentComplaintDetailsContent() {
   const [reopenReason, setReopenReason] = useState("");
   const [isReopening, setIsReopening] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  if (!complaint && isLoading) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center dark:border-slate-800 dark:bg-slate-900">
+        <Loader2 className="mx-auto h-8 w-8 animate-spin text-indigo-600 mb-3" />
+        <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">Loading your complaint…</p>
+      </div>
+    );
+  }
 
   if (!complaint) {
     return (
@@ -99,12 +110,13 @@ function StudentComplaintDetailsContent() {
     if (!infoReply.trim()) return;
 
     setIsSubmittingInfo(true);
+    setActionError(null);
     try {
       await provideAdditionalInfo(complaint.id, infoReply.trim());
       setInfoSuccess(true);
       setInfoReply("");
-    } catch {
-      // Error
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not submit the additional information. Please try again.");
     } finally {
       setIsSubmittingInfo(false);
     }
@@ -112,8 +124,11 @@ function StudentComplaintDetailsContent() {
 
   const handleConfirmResolution = async () => {
     setIsConfirming(true);
+    setActionError(null);
     try {
       await confirmResolution(complaint.id);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not confirm the resolution. Please try again.");
     } finally {
       setIsConfirming(false);
     }
@@ -124,10 +139,13 @@ function StudentComplaintDetailsContent() {
     if (!reopenReason.trim()) return;
 
     setIsReopening(true);
+    setActionError(null);
     try {
       await reopenComplaint(complaint.id, reopenReason.trim());
       setReopenModalOpen(false);
       setReopenReason("");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not reopen the complaint. Please try again.");
     } finally {
       setIsReopening(false);
     }
@@ -151,6 +169,11 @@ function StudentComplaintDetailsContent() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {actionError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+          {actionError}
+        </div>
+      )}
       {/* Top Header & Breadcrumb */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-3">
